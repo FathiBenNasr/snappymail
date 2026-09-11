@@ -8,8 +8,8 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 {
 	const
 		NAME     = 'Two Factor Authentication',
-		VERSION  = '2.19.0',
-		RELEASE  = '2024-03-29',
+		VERSION  = '2.20.0',
+		RELEASE  = '2026-09-11',
 		REQUIRED = '2.36.0',
 		CATEGORY = 'Login',
 		DESCRIPTION = 'Provides support for TOTP 2FA';
@@ -42,6 +42,11 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 //				->SetLabel('PLUGIN_TWO_FACTOR/LABEL_FORCE')
 				->SetLabel('Enforce 2-Step Verification')
 				->SetType(\RainLoop\Enumerations\PluginPropertyType::BOOL),
+			\RainLoop\Plugins\Property::NewInstance("otp_image_url")
+				->SetLabel('Authenticator icon URL')
+				->SetType(\RainLoop\Enumerations\PluginPropertyType::STRING)
+				->SetDescription('Optional https:// address of a square PNG (256x256 works well) that FreeOTP, FreeOTP+ and 2FAS draw next to the account. The phone fetches it, not the browser, so it must be reachable from the internet. Google Authenticator, Microsoft Authenticator and Aegis ignore it.')
+				->SetDefaultValue(''),
 		];
 	}
 
@@ -120,7 +125,7 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 				'User' => $sEmail,
 				'Enable' => false,
 				'Secret' => $sSecret,
-				'QRCode' => static::getQRCode($oAccount, $sSecret),
+				'QRCode' => $this->getQRCode($oAccount, $sSecret),
 				'BackupCodes' => \implode(' ', $aCodes)
 			))
 		);
@@ -128,16 +133,54 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 		return $this->jsonResponse(__FUNCTION__, $this->getTwoFactorInfo($oAccount));
 	}
 
-	private static function getQRCode(MainAccount $oAccount, string $secret) : string
+	private function getQRCode(MainAccount $oAccount, string $secret) : string
 	{
 		$email = \rawurlencode($oAccount->Email());
 //		$issuer = \rawurlencode(\RainLoop\API::Config()->Get('webmail', 'title', 'SnappyMail'));
+		$uri = "otpauth://totp/{$email}?secret={$secret}";
+		$image = $this->otpImageUrl();
+		if ($image) {
+			$uri .= '&image=' . \rawurlencode($image);
+		}
 		$QR = \SnappyMail\QRCode::getMinimumQRCode(
 //			"otpauth://totp/{$issuer}:{$email}?secret={$secret}&issuer={$issuer}",
-			"otpauth://totp/{$email}?secret={$secret}",
+			$uri,
 			\SnappyMail\QRCode::ERROR_CORRECT_LEVEL_M
 		);
 		return $QR->__toString();
+	}
+
+	/**
+	 * The icon an authenticator shows next to the account, or '' when unset.
+	 *
+	 * `image` is in no standard. FreeOTP, FreeOTP+ and 2FAS fetch it at
+	 * enrollment time and draw the logo; Google Authenticator, Microsoft
+	 * Authenticator and Aegis ignore it and show a letter. It is therefore
+	 * optional end to end, and an empty setting leaves the URI byte for byte
+	 * as it was.
+	 *
+	 * Only https:// is accepted, and not out of pedantry: the phone — not the
+	 * browser — fetches this URL, over whatever network it happens to be on.
+	 * In the clear, anyone on that path learns that an enrollment is taking
+	 * place and for which service. The secret does not leak; the event does.
+	 *
+	 * A configured address that is refused is written to the log rather than
+	 * dropped in silence: a missing icon is otherwise indistinguishable from
+	 * an authenticator that cannot show one, and the fault would be looked for
+	 * on the wrong side.
+	 */
+	private function otpImageUrl() : string
+	{
+		$image = \trim((string) $this->Config()->Get('plugin', 'otp_image_url', ''));
+		if ('' === $image) {
+			return '';
+		}
+		if (!\str_starts_with($image, 'https://') || !\parse_url($image, PHP_URL_HOST)) {
+			$this->logWrite('otp_image_url must be an https:// address, ignored: ' . $image,
+				\LOG_WARNING);
+			return '';
+		}
+		return $image;
 	}
 
 	public function DoShowTwoFactorSecret() : array
@@ -151,7 +194,7 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 		$aResult = $this->getTwoFactorInfo($oAccount);
 		unset($aResult['BackupCodes']);
 
-		$aResult['QRCode'] = static::getQRCode($oAccount, $aResult['Secret']);
+		$aResult['QRCode'] = $this->getQRCode($oAccount, $aResult['Secret']);
 
 		return $this->jsonResponse(__FUNCTION__, $aResult);
 	}
@@ -282,7 +325,7 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 			$aResult['Enable'] = isset($mData['Enable']) ? !!$mData['Enable'] : false;
 			$aResult['Secret'] = $mData['Secret'];
 			$aResult['BackupCodes'] = $mData['BackupCodes'];
-			$aResult['QRCode'] = static::getQRCode($oAccount, $mData['Secret']);
+			$aResult['QRCode'] = $this->getQRCode($oAccount, $mData['Secret']);
 		}
 
 		if ($bRemoveSecret) {
