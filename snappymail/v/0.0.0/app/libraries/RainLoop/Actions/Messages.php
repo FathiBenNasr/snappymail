@@ -32,6 +32,7 @@ trait Messages
 			$oParams->iOffset = $aValues['offset'];
 			$oParams->sSearch = (string) $aValues['search'];
 			$oParams->sSort = (string) $aValues['sort'];
+			$oParams->bSearchFuzzy = !empty($aValues['fuzzy']);
 			if (isset($aValues['uidNext'])) {
 				$oParams->iPrevUidNext = $aValues['uidNext'];
 			}
@@ -51,6 +52,7 @@ trait Messages
 			$oParams->iLimit = $this->GetActionParam('limit', 10);
 			$oParams->sSearch = $this->GetActionParam('search', '');
 			$oParams->sSort = $this->GetActionParam('sort', '');
+			$oParams->bSearchFuzzy = !empty($this->GetActionParam('fuzzy', '0'));
 			$oParams->iPrevUidNext = $this->GetActionParam('uidNext', 0);
 			$oParams->bUseThreads = !empty($this->GetActionParam('useThreads', '0'));
 			if ($oParams->bUseThreads) {
