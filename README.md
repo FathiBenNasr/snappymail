@@ -21,6 +21,7 @@ no third party fonts or scripts, and no external avatar service.
 - Search a whole folder subtree, using IMAP MULTISEARCH where the server has it and searching each folder in turn where it does not
 - Undo send, with a configurable delay before the message reaches SMTP
 - Unread count per account on the account switcher
+- Additional accounts can authenticate with OAuth2 instead of an app password, through the Gmail, Office 365 or generic OAuth2 plugin. Previously only the account you logged in with could, so a second Gmail account meant an app password and therefore 2-step verification. Works on a default install: the provider's redirect back is cross-site and so carries no session cookie, and the tokens are collected by a follow-up request rather than in the callback
 - Remote images stay blocked until you allow them, per sender, and that list is kept on the server rather than in one browser
 
 **Calendar**
