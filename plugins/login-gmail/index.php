@@ -6,9 +6,6 @@
  * https://console.cloud.google.com/apis/dashboard
  */
 
-use Tachyon\Model\MainAccount;
-use Tachyon\Providers\Storage\Enumerations\StorageType;
-
 class LoginGMailPlugin extends \Tachyon\Plugins\AbstractPlugin
 {
 	const
@@ -23,7 +20,22 @@ class LoginGMailPlugin extends \Tachyon\Plugins\AbstractPlugin
 		LOGIN_URI = 'https://accounts.google.com/o/oauth2/auth',
 		TOKEN_URI = 'https://accounts.google.com/o/oauth2/token';
 
-	private static ?array $auth = null;
+	use \Tachyon\Plugins\OAuth2Accounts;
+
+	protected function oauthPrefix() : string
+	{
+		return 'login-gmail';
+	}
+
+	protected function oauthTokenUri() : string
+	{
+		return static::TOKEN_URI;
+	}
+
+	protected function oauthClient() : ?\OAuth2\Client
+	{
+		return $this->gmailConnector();
+	}
 
 	public function Init() : void
 	{
@@ -115,12 +127,13 @@ class LoginGMailPlugin extends \Tachyon\Plugins\AbstractPlugin
 				throw new \RuntimeException('unknown email address');
 			}
 
-			static::$auth = [
+			$aTokens = [
 				'access_token' => $sAccessToken,
 				'refresh_token' => $aResponse['refresh_token'],
 				'expires_in' => $aResponse['expires_in'],
 				'expires' => $iExpires
 			];
+			$this->oauthSeedToken($aUserInfo['email'], $aTokens);
 
 			$oPassword = new \Tachyon\Util\SensitiveString($aUserInfo['id']);
 			$oAccount = $oActions->LoginProcess($aUserInfo['email'], $oPassword);
@@ -128,9 +141,7 @@ class LoginGMailPlugin extends \Tachyon\Plugins\AbstractPlugin
 			if ($oAccount) {
 //				$oActions->SetMainAuthAccount($oAccount);
 //				$oActions->SetAuthToken($oAccount);
-				$oActions->StorageProvider()->Put($oAccount, StorageType::SESSION, \Tachyon\Utils::GetSessionToken(),
-					\Tachyon\Util\Crypt::EncryptToJSON(static::$auth, $oAccount->CryptKey())
-				);
+				$this->oauthSaveTokensFor($oAccount, $aTokens);
 			}
 		}
 		catch (\Exception $oException)
@@ -158,39 +169,11 @@ class LoginGMailPlugin extends \Tachyon\Plugins\AbstractPlugin
 
 	public function clientLogin(\Tachyon\Model\Account $oAccount, \MailSo\Net\NetClient $oClient, \MailSo\Net\ConnectSettings $oSettings) : void
 	{
-		if ($oAccount instanceof MainAccount && \str_ends_with($oAccount->Email(), '@gmail.com')) {
-			$oActions = \Tachyon\Api::Actions();
-			try {
-				$aData = static::$auth ?: \Tachyon\Util\Crypt::DecryptFromJSON(
-					$oActions->StorageProvider()->Get($oAccount, StorageType::SESSION, \Tachyon\Utils::GetSessionToken()),
-					$oAccount->CryptKey()
-				);
-			} catch (\Throwable $oException) {
-//				$oActions->Logger()->WriteException($oException, \LOG_ERR);
-				return;
-			}
-			if (!empty($aData['expires']) && !empty($aData['access_token']) && !empty($aData['refresh_token'])) {
-				if (\time() >= $aData['expires']) {
-					$iExpires = \time();
-					$oGMail = $this->gmailConnector();
-					if ($oGMail) {
-						$aRefreshTokenResponse = $oGMail->getAccessToken(
-							static::TOKEN_URI,
-							'refresh_token',
-							array('refresh_token' => $aData['refresh_token'])
-						);
-						if (!empty($aRefreshTokenResponse['result']['access_token'])) {
-							$aData['access_token'] = $aRefreshTokenResponse['result']['access_token'];
-							$aData['expires'] = $iExpires + $aRefreshTokenResponse['result']['expires_in'];
-							$oActions->StorageProvider()->Put($oAccount, StorageType::SESSION, \Tachyon\Utils::GetSessionToken(),
-								\Tachyon\Util\Crypt::EncryptToJSON($aData, $oAccount->CryptKey())
-							);
-						}
-					}
-				}
-				$oSettings->passphrase = $aData['access_token'];
-				\array_unshift($oSettings->SASLMechanisms, 'OAUTHBEARER', 'XOAUTH2');
-			}
+		// Additional accounts used to be excluded here, which left a Gmail account
+		// added alongside the login one with no way to authenticate but an app
+		// password, and so 2-step verification turned on to get one.
+		if (\str_ends_with(\strtolower($oAccount->Email()), '@gmail.com')) {
+			$this->oauthApplySettings($oAccount, $oSettings);
 		}
 	}
 
