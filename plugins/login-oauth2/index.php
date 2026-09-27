@@ -1,44 +1,78 @@
 <?php
 
+/**
+ * Generic OAuth2 login for any provider that supports RFC 7628 (XOAUTH2 /
+ * OAUTHBEARER) on IMAP, SMTP and Sieve, and OpenID Connect style userinfo.
+ *
+ * Unlike login-gmail and login-o365 nothing here is tied to one provider: the
+ * endpoints, scopes and the domains it answers for are all configuration. Point
+ * it at Fastmail, Zoho, a corporate identity provider, or anything else that
+ * issues refresh tokens.
+ */
+
 class LoginOAuth2Plugin extends \Tachyon\Plugins\AbstractPlugin
 {
 	const
 		NAME     = 'OAuth2',
-		VERSION  = '1.3',
-		RELEASE  = '2024-03-27',
+		VERSION  = '2.0',
+		RELEASE  = '2026-09-27',
 		REQUIRED = '2.36.1',
 		CATEGORY = 'Login',
-		DESCRIPTION = 'IMAP, Sieve & SMTP login using RFC 7628 OAuth2';
+		DESCRIPTION = 'IMAP, Sieve & SMTP login using RFC 7628 OAuth2, for any provider';
 
-	const
-		LOGIN_URI = 'https://accounts.google.com/o/oauth2/auth',
-		TOKEN_URI = 'https://accounts.google.com/o/oauth2/token',
-		GMAIL_TOKENS_PREFIX = ':GAT:';
+	use \Tachyon\Plugins\OAuth2Accounts;
+
+	protected function oauthPrefix() : string
+	{
+		return 'login-oauth2';
+	}
+
+	protected function oauthTokenUri() : string
+	{
+		return \trim($this->Config()->Get('plugin', 'token_uri', ''));
+	}
+
+	protected function oauthClient() : ?\OAuth2\Client
+	{
+		$sId = \trim($this->Config()->Get('plugin', 'client_id', ''));
+		$sSecret = \trim($this->Config()->getDecrypted('plugin', 'client_secret', ''));
+		if (!$sId || !$sSecret) {
+			return null;
+		}
+		$oActions = \Tachyon\Api::Actions();
+		try {
+			$oClient = new \OAuth2\Client($sId, $sSecret);
+			$sProxy = $oActions->Config()->Get('labs', 'curl_proxy', '');
+			if (\strlen($sProxy)) {
+				$oClient->setCurlOption(\CURLOPT_PROXY, $sProxy);
+				$sProxyAuth = $oActions->Config()->Get('labs', 'curl_proxy_auth', '');
+				if (\strlen($sProxyAuth)) {
+					$oClient->setCurlOption(\CURLOPT_PROXYUSERPWD, $sProxyAuth);
+				}
+			}
+			return $oClient;
+		} catch (\Throwable $oException) {
+			$oActions->Logger()->WriteException($oException, \LOG_ERR);
+		}
+		return null;
+	}
 
 	public function Init() : void
 	{
 		$this->UseLangs(true);
 		$this->addJs('LoginOAuth2.js');
-//		$this->addHook('imap.before-connect', array($this, $oImapClient, $oSettings));
-//		$this->addHook('imap.after-connect', array($this, $oImapClient, $oSettings));
 		$this->addHook('imap.before-login', 'clientLogin');
-//		$this->addHook('imap.after-login', array($this, $oImapClient, $oSettings));
-//		$this->addHook('smtp.before-connect', array($this, $oSmtpClient, $oSettings));
-//		$this->addHook('smtp.after-connect', array($this, $oSmtpClient, $oSettings));
 		$this->addHook('smtp.before-login', 'clientLogin');
-//		$this->addHook('smtp.after-login', array($this, $oSmtpClient, $oSettings));
-//		$this->addHook('sieve.before-connect', array($this, $oSieveClient, $oSettings));
-//		$this->addHook('sieve.after-connect', array($this, $oSieveClient, $oSettings));
 		$this->addHook('sieve.before-login', 'clientLogin');
-//		$this->addHook('sieve.after-login', array($this, $oSieveClient, $oSettings));
-		$this->addHook('filter.account', 'filterAccount');
 
-//		set_include_path(get_include_path() . PATH_SEPARATOR . __DIR__);
-		spl_autoload_register(function($classname){
-			if (str_starts_with($classname, 'OAuth2\\')) {
-				include_once __DIR__ . strtr("\\{$sClassName}", '\\', DIRECTORY_SEPARATOR) . '.php';
-			}
-		});
+		$this->addPartHook('LoginOAuth2', 'ServiceLoginOAuth2');
+		$this->addJsonHook('LoginOAuth2AuthUrl', 'DoLoginOAuth2AuthUrl');
+		$this->addJsonHook('LoginOAuth2Claim', 'DoLoginOAuth2Claim');
+
+		// Prevent Disallowed Sec-Fetch Dest: document Mode: navigate Site: cross-site User: true
+		$this->addHook('filter.http-paths', 'httpPaths');
+
+		$this->addHook('json.after-AccountDelete', 'afterAccountDelete');
 	}
 
 	public function configMapping() : array
@@ -46,284 +80,313 @@ class LoginOAuth2Plugin extends \Tachyon\Plugins\AbstractPlugin
 		return [
 			\Tachyon\Plugins\Property::NewInstance('client_id')
 				->SetLabel('Client ID')
-				->SetType(\Tachyon\Enumerations\PluginPropertyType::STRING),
+				->SetType(\Tachyon\Enumerations\PluginPropertyType::STRING)
+				->SetAllowedInJs(),
 			\Tachyon\Plugins\Property::NewInstance('client_secret')
 				->SetLabel('Client Secret')
-				->SetType(\Tachyon\Enumerations\PluginPropertyType::STRING),
+				->SetType(\Tachyon\Enumerations\PluginPropertyType::STRING)
+				->SetEncrypted(),
+			\Tachyon\Plugins\Property::NewInstance('auth_uri')
+				->SetLabel('Authorization endpoint')
+				->SetType(\Tachyon\Enumerations\PluginPropertyType::URL)
+				->SetPlaceholder('https://example.com/oauth2/authorize'),
+			\Tachyon\Plugins\Property::NewInstance('token_uri')
+				->SetLabel('Token endpoint')
+				->SetType(\Tachyon\Enumerations\PluginPropertyType::URL)
+				->SetPlaceholder('https://example.com/oauth2/token'),
+			\Tachyon\Plugins\Property::NewInstance('userinfo_uri')
+				->SetLabel('Userinfo endpoint')
+				->SetType(\Tachyon\Enumerations\PluginPropertyType::URL)
+				->SetDescription('Queried with the access token to learn the address that was authorized.')
+				->SetPlaceholder('https://example.com/oauth2/userinfo'),
+			\Tachyon\Plugins\Property::NewInstance('scopes')
+				->SetLabel('Scopes')
+				->SetType(\Tachyon\Enumerations\PluginPropertyType::STRING_TEXT)
+				->SetDescription('Space separated. Must cover the mail access the provider requires, plus whatever its userinfo endpoint needs to return an address.')
+				->SetDefaultValue('openid email profile'),
+			\Tachyon\Plugins\Property::NewInstance('domains')
+				->SetLabel('Email domains')
+				->SetType(\Tachyon\Enumerations\PluginPropertyType::STRING)
+				->SetDescription('Space separated, e.g. "example.com example.net". Only addresses in these domains use OAuth2; everything else logs in normally. Leave empty to apply to every address.')
+				->SetAllowedInJs()
 		];
+	}
+
+	public function httpPaths(array $aPaths) : void
+	{
+		if (!empty($aPaths[0]) && 'LoginOAuth2' === $aPaths[0]) {
+			$oConfig = \Tachyon\Api::Config();
+			$oConfig->Set('security', 'secfetch_allow',
+				\trim($oConfig->Get('security', 'secfetch_allow', '') . ';site=cross-site', ';')
+			);
+		}
 	}
 
 	public function clientLogin(\Tachyon\Model\Account $oAccount, \MailSo\Net\NetClient $oClient, \MailSo\Net\ConnectSettings $oSettings) : void
 	{
-		$sPassword = $oSettings->passphrase;
-		$iGatLen = \strlen(static::GMAIL_TOKENS_PREFIX);
-		if ($sPassword && static::GMAIL_TOKENS_PREFIX === \substr($sPassword, 0, $iGatLen)) {
-			$aTokens = \json_decode(\substr($sPassword, $iGatLen));
-			$sAccessToken = !empty($aTokens[0]) ? $aTokens[0] : '';
-			$sRefreshToken = !empty($aTokens[1]) ? $aTokens[1] : '';
-		}
-		if ($sAccessToken && $sRefreshToken) {
-			$oSettings->passphrase = $this->gmailRefreshToken($sAccessToken, $sRefreshToken);
-			\array_unshift($oSettings->SASLMechanisms, 'OAUTHBEARER', 'XOAUTH2');
+		if ($this->isSupportedEmail($oAccount->Email())) {
+			$this->oauthApplySettings($oAccount, $oSettings);
 		}
 	}
 
-	public function filterAccount(\Tachyon\Model\Account $oAccount) : void
+	public function afterAccountDelete(array &$aResponse) : void
 	{
-		if ($oAccount instanceof \Tachyon\Model\MainAccount) {
-			/**
-			 * TODO
-			 * Because password rotates, so does the CryptKey.
-			 * So we need to securely save a cryptkey.
-			 * Encrypted using the old/new refresh token is an option:
-			 *   1. decrypt cryptkey with the old refresh token
-			 *   2. encrypt cryptkey with the new refresh token
-			 *   = $oAccount->resealCryptKey(new \Tachyon\Util\SensitiveString('old refresh token'))
-			 */
+		if (empty($aResponse['Result'])) {
+			return;
 		}
-	}
-
-	protected function loginProcess(&$oAccount, $sEmail, $sPassword) : int
-	{
-		$oActions = \Tachyon::Actions();
-		$iErrorCode = \Tachyon\Notifications::UnknownError;
-		try
-		{
-			$oAccount = $oActions->LoginProcess($sEmail, $sPassword);
-			if ($oAccount instanceof \Tachyon\Model\Account) {
-				$iErrorCode = 0;
-			} else {
-				$oAccount = null;
-				$iErrorCode = \Tachyon\Notifications::AuthError;
+		$oActions = \Tachyon\Api::Actions();
+		$oMain = $oActions->getMainAccountFromToken(false);
+		if ($oMain) {
+			$sEmail = $this->oauthNormalise((string) $oActions->GetActionParam('emailToDelete', ''));
+			if ($sEmail && $this->isSupportedEmail($sEmail)) {
+				$this->oauthClearTokens($oMain, $sEmail);
 			}
 		}
-		catch (\Tachyon\Exceptions\ClientException $oException)
-		{
-			$iErrorCode = $oException->getCode();
+	}
+
+	public function isSupportedEmail(string $sEmail) : bool
+	{
+		$sEmail = \strtolower(\trim($sEmail));
+		if (!\str_contains($sEmail, '@')) {
+			return false;
 		}
-		catch (\Exception $oException)
-		{
-			unset($oException);
-			$iErrorCode = \Tachyon\Notifications::UnknownError;
+		$aDomains = \preg_split('/[\s,;]+/', \strtolower(\trim($this->Config()->Get('plugin', 'domains', ''))), -1, \PREG_SPLIT_NO_EMPTY);
+		if (!$aDomains) {
+			// Unconfigured means every address, which is what a single-provider
+			// install wants and is the only sensible reading of an empty list.
+			return true;
+		}
+		$sDomain = \substr($sEmail, \strrpos($sEmail, '@') + 1);
+		return \in_array($sDomain, $aDomains, true);
+	}
+
+	private function redirectUri() : string
+	{
+		return \Tachyon\Api::Actions()->Http()->GetFullUrl() . '?LoginOAuth2';
+	}
+
+	public function DoLoginOAuth2AuthUrl() : array
+	{
+		$sOp = (string) $this->jsonParam('op', 'login');
+		if (!\in_array($sOp, ['login', 'add'], true)) {
+			return $this->jsonResponse(__FUNCTION__, false);
 		}
 
-		return $iErrorCode;
-	}
+		$sClientId = \trim($this->Config()->Get('plugin', 'client_id', ''));
+		$sAuthUri = \trim($this->Config()->Get('plugin', 'auth_uri', ''));
+		if (!$sClientId || !$sAuthUri || !$this->oauthTokenUri()) {
+			return $this->jsonResponse(__FUNCTION__, false);
+		}
 
-	/**
-	 * GMail
-	 */
+		$sEmail = $this->oauthNormalise((string) $this->jsonParam('email', ''));
+		if ($sEmail && !$this->isSupportedEmail($sEmail)) {
+			return $this->jsonResponse(__FUNCTION__, false);
+		}
 
-	protected static function gmailTokensPassword($sAccessToken, $sRefreshToken) : string
-	{
-		return static::GMAIL_TOKENS_PREFIX . \json_encode(array($sAccessToken, $sRefreshToken));
-	}
-
-	protected function gmailStoreTokens($oCache, $sAccessToken, $sRefreshToken) : void
-	{
-		$sCacheKey = 'tokens='.\sha1($sRefreshToken);
-		$oCache->Set($sCacheKey, $sAccessToken);
-		$oCache->SetTimer($sCacheKey);
-	}
-
-	protected function gmailRefreshToken($sAccessToken, $sRefreshToken) : string
-	{
-		$oActions = \Tachyon::Actions();
-		$oAccount = $oActions->getAccountFromToken(false);
-		$oDomain  = $oAccount->Domain();
-		$oLogger  = $oImapClient->Logger();
-		if ($oAccount && $oActions->GetIsJson()) {
-			$oCache = $oActions->Cacher($oAccount);
-			$sCacheKey = 'tokens='.\sha1($sRefreshToken);
-
-			$sCachedAccessToken = $oCache->Get($sCacheKey);
-			$iTime = $oCache->GetTimer($sCacheKey);
-
-			if (!$sCachedAccessToken || !$iTime) {
-				$this->gmailStoreTokens($oCache, $sAccessToken, $sRefreshToken);
-			} else if (\time() - 1200 > $iTime) { // 20min
-				$oGMail = $this->gmailConnector();
-				if ($oGMail) {
-					$aRefreshTokenResponse = $oGMail->getAccessToken(
-						static::TOKEN_URI,
-						'refresh_token',
-						array('refresh_token' => $sRefreshToken)
-					);
-					if (!empty($aRefreshTokenResponse['result']['access_token'])) {
-						$sCachedAccessToken = $aRefreshTokenResponse['result']['access_token'];
-						$this->gmailStoreTokens($oCache, $sCachedAccessToken, $sRefreshToken);
-/*
-						$oAccount->SetPassword(static::gmailTokensPassword($sCachedAccessToken, $sRefreshToken));
-						$oActions->AuthToken($oAccount);
-//						$oActions->SetUpdateAuthToken($oActions->GetSpecAuthToken());
-							$oActions->sUpdateAuthToken = $oActions->GetSpecAuthToken();
-							$sUpdateToken = $oActions->GetUpdateAuthToken();
-							if ($sUpdateToken) {
-								$aResponseItem['UpdateToken'] = $sUpdateToken;
-							}
-*/
-					}
-				}
+		$aPayload = ['v' => 1, 'op' => $sOp];
+		if ('add' === $sOp) {
+			// Only a logged in account can gain one, and we need its address now,
+			// while the cookie is still with us.
+			$oMain = \Tachyon\Api::Actions()->getMainAccountFromToken(false);
+			if (!$oMain) {
+				return $this->jsonResponse(__FUNCTION__, false);
 			}
-
-			if ($sCachedAccessToken) {
-				return $sCachedAccessToken;
+			$aPayload['main'] = $oMain->Email();
+			$sName = \trim((string) $this->jsonParam('name', ''));
+			if ($sName) {
+				$aPayload['name'] = \substr($sName, 0, 100);
+			}
+			$sReturn = (string) $this->jsonParam('return', '');
+			if ($sReturn && \str_starts_with($sReturn, '#')) {
+				$aPayload['return'] = \substr($sReturn, 0, 200);
 			}
 		}
 
-		return $sAccessToken;
-	}
-
-	protected function gmailConnector() : ?\OAuth2\Client
-	{
-		$oGMail = null;
-		$oActions = \Tachyon::Actions();
-		$client_id = \trim($this->Config()->Get('plugin', 'client_id', ''));
-		$client_secret = \trim($this->Config()->Get('plugin', 'client_secret', ''));
-		if ($client_id && $client_secret) {
-//			include_once __DIR__ . '/OAuth2/Client.php';
-//			include_once __DIR__ . '/OAuth2/GrantType/IGrantType.php';
-//			include_once __DIR__ . '/OAuth2/GrantType/AuthorizationCode.php';
-//			include_once __DIR__ . '/OAuth2/GrantType/RefreshToken.php';
-
-			try
-			{
-				$oGMail = new \OAuth2\Client($client_id, $client_secret);
-				$sProxy = $oActions->Config()->Get('labs', 'curl_proxy', '');
-				if (\strlen($sProxy)) {
-					$oGMail->setCurlOption(CURLOPT_PROXY, $sProxy);
-					$sProxyAuth = $oActions->Config()->Get('labs', 'curl_proxy_auth', '');
-					if (\strlen($sProxyAuth)) {
-						$oGMail->setCurlOption(CURLOPT_PROXYUSERPWD, $sProxyAuth);
-					}
-				}
-			}
-			catch (\Exception $oException)
-			{
-				$oActions->Logger()->WriteException($oException, \LOG_ERR);
-			}
+		$aParams = [
+			'response_type' => 'code',
+			'client_id' => $sClientId,
+			'redirect_uri' => $this->redirectUri(),
+			'scope' => \implode(' ', \preg_split('/\s+/',
+				\trim($this->Config()->Get('plugin', 'scopes', '')), -1, \PREG_SPLIT_NO_EMPTY)),
+			'state' => $this->oauthMintState($aPayload),
+			// Ask to be shown the consent screen, since without it many providers
+			// return no refresh token on a repeat authorization.
+			'access_type' => 'offline',
+			'prompt' => 'consent'
+		];
+		if ($sEmail) {
+			$aParams['login_hint'] = $sEmail;
 		}
 
-		return $oGMail;
+		return $this->jsonResponse(__FUNCTION__, [
+			'authUrl' => $sAuthUri . '?' . \http_build_query($aParams, '', '&', \PHP_QUERY_RFC3986)
+		]);
 	}
 
-	protected function gmailPopupService() : string
+	public function ServiceLoginOAuth2() : string
 	{
-		$sLoginUrl = '';
-		$oAccount = null;
-		$oActions = \Tachyon::Actions();
-		$oHttp    = $oActions->Http();
+		$oActions = \Tachyon\Api::Actions();
+		$oActions->Http()->ServerNoCache();
 
-		$bLogin = false;
-		$iErrorCode = \Tachyon\Notifications::UnknownError;
+		$sUri = \preg_replace('/.LoginOAuth2.*$/D', '', $_SERVER['REQUEST_URI']);
 
 		try
 		{
-			$oGMail = $this->gmailConnector();
-			if ($oHttp->HasQuery('error')) {
-				$iErrorCode = ('access_denied' === $oHttp->GetQuery('error')) ?
-					\Tachyon\Notifications::SocialGMailLoginAccessDisable : \Tachyon\Notifications::UnknownError;
-			} else if ($oGMail) {
-				$oAccount = $oActions->GetAccount();
-				$bLogin = !$oAccount;
+			if (isset($_GET['error'])) {
+				throw new \RuntimeException((string) $_GET['error'] . ': ' . ($_GET['error_description'] ?? ''));
+			}
 
-				$sCheckToken = '';
-				$sCheckAuth = '';
-				$sState = $oHttp->GetQuery('state');
-				if (!empty($sState)) {
-					$aParts = explode('|', $sState, 3);
-					$sCheckToken = !empty($aParts[1]) ? $aParts[1] : '';
-					$sCheckAuth = !empty($aParts[2]) ? $aParts[2] : '';
+			$aState = empty($_GET['state']) ? null : $this->oauthConsumeState((string) $_GET['state']);
+			$oClient = (isset($_GET['code']) && $aState) ? $this->oauthClient() : null;
+			if (!$oClient) {
+				$oActions->Location($sUri);
+				exit;
+			}
+
+			$iExpires = \time();
+			$aResponse = $oClient->getAccessToken($this->oauthTokenUri(), 'authorization_code', [
+				'code' => $_GET['code'],
+				'redirect_uri' => $this->redirectUri()
+			]);
+			if (200 != $aResponse['code']) {
+				throw new \RuntimeException("Token HTTP {$aResponse['code']}: "
+					. ($aResponse['result']['error'] ?? '') . ' / ' . ($aResponse['result']['error_description'] ?? ''));
+			}
+			$aResponse = $aResponse['result'];
+			if (empty($aResponse['access_token'])) {
+				throw new \RuntimeException('access_token missing');
+			}
+			if (empty($aResponse['refresh_token'])) {
+				// Without one every session would need the consent screen again.
+				throw new \RuntimeException('refresh_token missing, check that the provider was asked for offline access');
+			}
+			$iExpires += (int) ($aResponse['expires_in'] ?? 0);
+
+			$aIdentity = $this->fetchIdentity($oClient, $aResponse['access_token']);
+			if (!$this->isSupportedEmail($aIdentity['email'])) {
+				throw new \RuntimeException('Address is outside the configured domains');
+			}
+
+			$aTokens = [
+				'access_token' => $aResponse['access_token'],
+				'refresh_token' => $aResponse['refresh_token'],
+				'expires_in' => (int) ($aResponse['expires_in'] ?? 0),
+				'expires' => $iExpires
+			];
+
+			if ('add' === ($aState['op'] ?? 'login')) {
+				// No cookies reach this request, so the main account cannot be
+				// identified or unsealed here. Park the tokens and let an
+				// authenticated request finish the job.
+				$sSecret = $this->oauthPutPickup([
+					'main'     => (string) ($aState['main'] ?? ''),
+					'email'    => $aIdentity['email'],
+					'identity' => $aIdentity['id'],
+					'name'     => (string) ($aState['name'] ?? ''),
+					'tokens'   => $aTokens
+				]);
+
+				$sReturn = '#/settings/accounts';
+				if (!empty($aState['return']) && \is_string($aState['return']) && \str_starts_with($aState['return'], '#')) {
+					$sReturn = $aState['return'];
 				}
+				$sJoin = \str_contains($sReturn, '?') ? '&' : '?';
+				$oActions->Location($sUri . $sReturn . $sJoin . 'oauth2claim=' . \rawurlencode($sSecret));
+				exit;
+			}
 
-				$sRedirectUrl = $oHttp->GetFullUrl().'?SocialGMail';
-				if (!$oHttp->HasQuery('code')) {
-					$aParams = array(
-						'scope' => \trim(\implode(' ', array(
-							'https://www.googleapis.com/auth/userinfo.email',
-							'https://www.googleapis.com/auth/userinfo.profile',
-							'https://mail.google.com/'
-						))),
-						'state' => '1|'.\Tachyon\Utils::GetConnectionToken().'|'.$oActions->GetSpecAuthToken(),
-						'response_type' => 'code'
-					);
-
-					$aParams['access_type'] = 'offline';
-					// $aParams['prompt'] = 'consent';
-
-					$sLoginUrl = $oGMail->getAuthenticationUrl(static::LOGIN_URI, $sRedirectUrl, $aParams);
-				} else if (!empty($sState) && $sCheckToken === \Tachyon\Utils::GetConnectionToken()) {
-					if (!empty($sCheckAuth)) {
-						$oActions->SetSpecAuthToken($sCheckAuth);
-						$oAccount = $oActions->GetAccount();
-						$bLogin = !$oAccount;
-					}
-
-					$aAuthorizationCodeResponse = $oGMail->getAccessToken(
-						static::TOKEN_URI,
-						'authorization_code',
-						array(
-							'code' => $oHttp->GetQuery('code'),
-							'redirect_uri' => $sRedirectUrl
-						)
-					);
-
-					$sAccessToken = !empty($aAuthorizationCodeResponse['result']['access_token']) ? $aAuthorizationCodeResponse['result']['access_token'] : '';
-					$sRefreshToken = !empty($aAuthorizationCodeResponse['result']['refresh_token']) ? $aAuthorizationCodeResponse['result']['refresh_token'] : '';
-
-					if (!empty($sAccessToken)) {
-						$oGMail->setAccessToken($sAccessToken);
-						$aUserInfoResponse = $oGMail->fetch('https://www.googleapis.com/oauth2/v2/userinfo');
-
-						if (!empty($aUserInfoResponse['result']['id'])) {
-							if ($bLogin) {
-								$aUserData = null;
-								if (!empty($aUserInfoResponse['result']['email'])) {
-									$aUserData = array(
-										'Email' => $aUserInfoResponse['result']['email'],
-										'Password' => static::gmailTokensPassword($sAccessToken, $sRefreshToken)
-									);
-								}
-
-								if ($aUserData && \is_array($aUserData) && !empty($aUserData['Email']) && isset($aUserData['Password'])) {
-									$iErrorCode = $this->loginProcess($oAccount, $aUserData['Email'], $aUserData['Password']);
-								} else {
-									$iErrorCode = \Tachyon\Notifications::SocialGMailLoginAccessDisable;
-								}
-							}
-						}
-					}
-				}
+			$this->oauthSeedToken($aIdentity['email'], $aTokens);
+			$oAccount = $oActions->LoginProcess($aIdentity['email'],
+				new \Tachyon\Util\SensitiveString($aIdentity['id']));
+			if ($oAccount) {
+				$this->oauthSaveTokensFor($oAccount, $aTokens);
 			}
 		}
-		catch (\Exception $oException)
+		catch (\Throwable $oException)
 		{
 			$oActions->Logger()->WriteException($oException, \LOG_ERR);
 		}
+		$oActions->Location($sUri);
+		exit;
+	}
 
-		$oActions = \Tachyon::Actions();
-		$oActions->Http()->ServerNoCache();
-		\header('Content-Type: text/html; charset=utf-8');
-		$sHtml = \file_get_contents(APP_VERSION_ROOT_PATH.'app/templates/Social.html');
-		if ($sLoginUrl) {
-			$sHtml = \strtr($sHtml, array(
-				'{{RefreshMeta}}' => '<meta http-equiv="refresh" content="0; URL='.$sLoginUrl.'" />',
-				'{{Script}}' => ''
-			));
-		} else {
-			$sCallBackType = $bLogin ? '_login' : '';
-			$sConnectionFunc = 'rl_'.\md5(\Tachyon\Utils::GetConnectionToken()).'_gmail'.$sCallBackType.'_service';
-			$sHtml = \strtr($sHtml, array(
-				'{{RefreshMeta}}' => '',
-				'{{Script}}' => '<script data-cfasync="false">opener && opener.'.$sConnectionFunc.' && opener.'.
-					$sConnectionFunc.'('.$iErrorCode.'); self && self.close && self.close();</script>'
-			));
+	/**
+	 * Finishes an add started before the cross-site redirect. Runs as an ordinary
+	 * authenticated request, so the session cookie is present and the main
+	 * account's CryptKey is reachable, neither of which is true in the callback.
+	 */
+	public function DoLoginOAuth2Claim() : array
+	{
+		$sSecret = (string) $this->jsonParam('pickup', '');
+		if (!\strlen($sSecret)) {
+			return $this->jsonResponse(__FUNCTION__, false);
 		}
 
-		$bAppCssDebug = $oActions->Config()->Get('labs', 'use_app_debug_css', false);
-		return \strtr($sHtml, array(
-			'{{Stylesheet}}' => $oActions->StaticPath('css/social'.($bAppCssDebug ? '' : '.min').'.css'),
-			'{{Icon}}' => 'gmail'
-		));
+		$oMain = \Tachyon\Api::Actions()->getMainAccountFromToken(false);
+		if (!$oMain) {
+			return $this->jsonResponse(__FUNCTION__, false);
+		}
+
+		$aPickup = $this->oauthTakePickup($sSecret);
+		if (!$aPickup || empty($aPickup['email']) || empty($aPickup['tokens']['access_token'])) {
+			return $this->jsonResponse(__FUNCTION__, false);
+		}
+
+		// The flow was started by one specific account; nobody else may finish it,
+		// even while authenticated.
+		if (!empty($aPickup['main']) && $aPickup['main'] !== $oMain->Email()) {
+			return $this->jsonResponse(__FUNCTION__, false);
+		}
+
+		$this->oauthAddAccount($oMain, (string) $aPickup['email'], $aPickup['tokens'],
+			(string) ($aPickup['identity'] ?? ''), (string) ($aPickup['name'] ?? ''));
+
+		return $this->jsonResponse(__FUNCTION__, true);
+	}
+
+	/**
+	 * Providers disagree on what the address claim is called, so try the ones in
+	 * use rather than making the admin tell us.
+	 *
+	 * @return array{email:string,id:string}
+	 */
+	private function fetchIdentity(\OAuth2\Client $oClient, string $sAccessToken) : array
+	{
+		$sUri = \trim($this->Config()->Get('plugin', 'userinfo_uri', ''));
+		if (!$sUri) {
+			throw new \RuntimeException('No userinfo endpoint is configured, so the authorized address cannot be established');
+		}
+		$oClient->setAccessToken($sAccessToken);
+		$aInfo = $oClient->fetch($sUri);
+		if (200 != $aInfo['code']) {
+			throw new \RuntimeException("Userinfo HTTP {$aInfo['code']}");
+		}
+		$aInfo = $aInfo['result'];
+		if (!\is_array($aInfo)) {
+			throw new \RuntimeException('Userinfo did not return an object');
+		}
+
+		$sEmail = '';
+		foreach (['email', 'preferred_username', 'upn', 'mail', 'username'] as $sKey) {
+			if (!empty($aInfo[$sKey]) && \is_string($aInfo[$sKey]) && \str_contains($aInfo[$sKey], '@')) {
+				$sEmail = $aInfo[$sKey];
+				break;
+			}
+		}
+		if (!$sEmail) {
+			throw new \RuntimeException('Userinfo carried no email address');
+		}
+
+		// Stands in for the password and authenticates nothing, but it should be
+		// stable for the account rather than change on every authorization.
+		$sId = '';
+		foreach (['sub', 'id', 'oid', 'user_id'] as $sKey) {
+			if (!empty($aInfo[$sKey]) && (\is_string($aInfo[$sKey]) || \is_int($aInfo[$sKey]))) {
+				$sId = (string) $aInfo[$sKey];
+				break;
+			}
+		}
+
+		return ['email' => $sEmail, 'id' => $sId ?: $sEmail];
 	}
 }
