@@ -26,6 +26,47 @@
       });
     };
 
+  // The callback cannot finish an add: it arrives cross-site, so SameSite=Strict
+  // withholds the session cookie and there is no way to tell who is logged in.
+  // It parks the tokens and names them in the fragment instead. Take the secret
+  // out of the URL straight away, since the fragment is the one place it would
+  // otherwise linger (browser history); it never travels in a request, so logs
+  // and Referer headers were never exposed to it.
+  const takeClaim = () => {
+      const hash = location.hash,
+        at = hash.indexOf("?");
+      if (0 > at) return null;
+      const params = new URLSearchParams(hash.slice(at + 1)),
+        secret = params.get("o365claim");
+      if (!secret) return null;
+      params.delete("o365claim");
+      const rest = params.toString();
+      history.replaceState(null, "", location.pathname + location.search
+        + hash.slice(0, at) + (rest ? "?" + rest : ""));
+      return secret;
+    },
+    pending = takeClaim();
+
+  if (pending) {
+    sessionStorage.setItem("o365claim", pending);
+  }
+
+  // Only cleared once the server has actually taken it, so a claim attempted
+  // before the session is usable can still be retried rather than lost.
+  let claiming = false;
+  const claimIfPending = () => {
+    const secret = sessionStorage.getItem("o365claim");
+    if (!secret || claiming) return;
+    claiming = true;
+    rl.pluginRemoteRequest((iError) => {
+      claiming = false;
+      if (!iError) {
+        sessionStorage.removeItem("o365claim");
+        rl.app?.loadAccountsAndIdentities?.();
+      }
+    }, "LoginO365Claim", { pickup: secret });
+  };
+
   if (client_id) {
     addEventListener("sm-user-login", (e) => {
       const email = (e.detail.get("Email") || "").toLowerCase();
@@ -36,6 +77,12 @@
     });
 
     addEventListener("rl-view-model", (e) => {
+      // Any logged-in view will do, and the settings accounts view is not one of
+      // them: it never reaches buildViewModel, so it raises no event here.
+      if ("Login" !== e.detail.viewModelTemplateID) {
+        claimIfPending();
+      }
+
       if ("Login" === e.detail.viewModelTemplateID) {
         const
 		  container = e.detail.viewModelDom.querySelector("#plugin-Login-BottomControlGroup"),

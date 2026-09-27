@@ -17,15 +17,12 @@
  * }
  */
 
-use Tachyon\Model\MainAccount;
-use Tachyon\Providers\Storage\Enumerations\StorageType;
-
 class LoginO365Plugin extends \Tachyon\Plugins\AbstractPlugin
 {
 	const
 		NAME     = 'Office365/Outlook OAuth2',
-		VERSION  = '0.4',
-		RELEASE  = '2025-12-22',
+		VERSION  = '0.5',
+		RELEASE  = '2026-09-27',
 		REQUIRED = '2.36.1',
 		CATEGORY = 'Login',
 		DESCRIPTION = 'Office365/Outlook IMAP, Sieve & SMTP login using RFC 7628 OAuth2';
@@ -35,17 +32,22 @@ class LoginO365Plugin extends \Tachyon\Plugins\AbstractPlugin
 		AUTH_URI  = 'https://login.microsoftonline.com/{{tenant}}/oauth2/v2.0/authorize',
 		TOKEN_URI = 'https://login.microsoftonline.com/{{tenant}}/oauth2/v2.0/token';
 
-	/**
-	 * In-request cache of decrypted token bundles, keyed by lowercase email.
-	 * This avoids re-decrypting the same blob multiple times during a single request.
-	 *
-	 * Shape:
-	 *   [
-	 *     'user@outlook.com' => ['access_token'=>..., 'refresh_token'=>..., 'expires'=>..., 'expires_in'=>...],
-	 *     ...
-	 *   ]
-	 */
-	private static array $auth = [];
+	use \Tachyon\Plugins\OAuth2Accounts;
+
+	protected function oauthPrefix() : string
+	{
+		return 'login-o365';
+	}
+
+	protected function oauthTokenUri() : string
+	{
+		return \str_replace('{{tenant}}', $this->Config()->Get('plugin', 'tenant', 'common'), static::TOKEN_URI);
+	}
+
+	protected function oauthClient() : ?\OAuth2\Client
+	{
+		return $this->o365Connector();
+	}
 
 	public function Init() : void
 	{
@@ -58,6 +60,9 @@ class LoginO365Plugin extends \Tachyon\Plugins\AbstractPlugin
 		$this->addPartHook('LoginO365', 'ServiceLoginO365');
 		// Used by JS to obtain an auth URL with signed state (for both login + add-account flows).
 		$this->addJsonHook('LoginO365AuthUrl', 'DoLoginO365AuthUrl');
+		// Collects the tokens the callback parked, from a request that still has
+		// its cookies and so can reach the main account's CryptKey.
+		$this->addJsonHook('LoginO365Claim', 'DoLoginO365Claim');
 
 		// Prevent Disallowed Sec-Fetch Dest: document Mode: navigate Site: cross-site User: true
 		$this->addHook('filter.http-paths', 'httpPaths');
@@ -112,7 +117,7 @@ class LoginO365Plugin extends \Tachyon\Plugins\AbstractPlugin
 			$tenant = $this->Config()->Get('plugin', 'tenant', 'common');
 
 			$state = (string) $_GET['state'];
-			$statePayload = $this->verifyAndConsumeState($state);
+			$statePayload = $this->oauthConsumeState($state);
 			if (!$statePayload) {
 				$oActions->Location(\Tachyon\Utils::WebPath());
 				exit;
@@ -183,67 +188,35 @@ class LoginO365Plugin extends \Tachyon\Plugins\AbstractPlugin
 
 			$op = $statePayload['op'] ?? 'login';
 			if ('add' === $op) {
-				$oMainAccount = $oActions->getMainAccountFromToken(false);
-				if (!$oMainAccount) {
-					throw new \RuntimeException('Add-account flow requires logged in main account');
-				}
-				if (!empty($statePayload['main']) && $statePayload['main'] !== $oMainAccount->Email()) {
-					throw new \RuntimeException('Add-account state does not match current main account');
-				}
+				// No cookies reach this request, so the main account cannot be
+				// identified or unsealed here. Park the tokens and let an
+				// authenticated request finish the job.
+				$sSecret = $this->oauthPutPickup([
+					'main'     => (string) ($statePayload['main'] ?? ''),
+					'email'    => $email,
+					'identity' => $sub,
+					'name'     => (string) ($statePayload['name'] ?? ''),
+					'tokens'   => $tokenBundle
+				]);
 
-				// Store token bundle encrypted with MAIN account crypt key (never store refresh_token unencrypted).
-				// This is later used by imap/smtp/sieve.before-login for *additional* accounts.
-				$this->storeAccountTokens($oMainAccount, $email, $tokenBundle);
-
-				// Create/validate an AdditionalAccount entry exactly like Tachyon expects in "additionalaccounts".
-				// We set the "password" to the OAuth subject (sub) as an opaque secret; the plugin will inject XOAUTH2.
-				$oPassword = new \Tachyon\Util\SensitiveString($sub);
-				$oAdditional = $oActions->LoginProcess($email, $oPassword, false);
-				if (!$oAdditional instanceof \Tachyon\Model\AdditionalAccount) {
-					throw new \RuntimeException('Failed to create additional account');
-				}
-
-				$asciiEmail = \Tachyon\Util\IDN::emailToAscii($oAdditional->Email());
-				if ($asciiEmail === $oMainAccount->Email()) {
-					throw new \RuntimeException('Cannot add main account as additional');
-				}
-
-				$aAccounts = $oActions->GetAccounts($oMainAccount);
-				$aEntry = $oAdditional->asTokenArray($oMainAccount);
-				if (!empty($statePayload['name']) && \is_string($statePayload['name'])) {
-					$aEntry['name'] = \trim($statePayload['name']);
-				} else if (isset($aAccounts[$asciiEmail]['name'])) {
-					// Preserve previous custom label if re-adding/updating.
-					$aEntry['name'] = (string) $aAccounts[$asciiEmail]['name'];
-				}
-				$aAccounts[$asciiEmail] = $aEntry;
-				$oActions->SetAccounts($oMainAccount, $aAccounts);
-
-				// Cache for this request (used during LoginProcess() above and any subsequent logins).
-				static::$auth[\strtolower($asciiEmail)] = $tokenBundle;
-
-				$returnHash = '';
+				$returnHash = '#/settings/accounts';
 				if (!empty($statePayload['return']) && \is_string($statePayload['return']) && \str_starts_with($statePayload['return'], '#')) {
 					$returnHash = $statePayload['return'];
 				}
-				$oActions->Location(\Tachyon\Utils::WebPath() . $returnHash);
+				$sJoin = \str_contains($returnHash, '?') ? '&' : '?';
+				$oActions->Location(\Tachyon\Utils::WebPath() . $returnHash . $sJoin . 'o365claim=' . \rawurlencode($sSecret));
 				exit;
 			}
 
 			// Default: "login" flow (preserve existing behavior)
-			static::$auth[\strtolower($email)] = $tokenBundle;
+			$this->oauthSeedToken($email, $tokenBundle);
 
 			// Tachyon uses password as opaque string; plugin injects XOAUTH2 later.
 			$oPassword = new \Tachyon\Util\SensitiveString($sub);
 			$oAccount = $oActions->LoginProcess($email, $oPassword);
 
 			if ($oAccount) {
-				$oActions->StorageProvider()->Put(
-					$oAccount,
-					StorageType::SESSION,
-					\Tachyon\Utils::GetSessionToken(),
-					\Tachyon\Util\Crypt::EncryptToJSON($tokenBundle, $oAccount->CryptKey())
-				);
+				$this->oauthSaveTokensFor($oAccount, $tokenBundle);
 			}
 		}
 		catch (\Throwable $e) {
@@ -287,98 +260,9 @@ class LoginO365Plugin extends \Tachyon\Plugins\AbstractPlugin
 
 	public function clientLogin(\Tachyon\Model\Account $oAccount, \MailSo\Net\NetClient $oClient, \MailSo\Net\ConnectSettings $oSettings) : void
 	{
-		$email = \strtolower($oAccount->Email());
-
-		if (!$this->isSupportedEmail($email)) {
-			return;
+		if ($this->isSupportedEmail(\strtolower($oAccount->Email()))) {
+			$this->oauthApplySettings($oAccount, $oSettings);
 		}
-
-		$oActions = \Tachyon\Api::Actions();
-
-		$aData = static::$auth[$email] ?? null;
-		if (!$aData) {
-			try {
-				if ($oAccount instanceof MainAccount) {
-					$blob = $oActions->StorageProvider()->Get(
-						$oAccount,
-						StorageType::SESSION,
-						\Tachyon\Utils::GetSessionToken()
-					);
-					$aData = \Tachyon\Util\Crypt::DecryptFromJSON($blob, $oAccount->CryptKey());
-				} else if ($oAccount instanceof \Tachyon\Model\AdditionalAccount) {
-					$oMain = $oActions->getMainAccountFromToken(false);
-					if (!$oMain) {
-						return;
-					}
-					$blob = $oActions->StorageProvider()->Get(
-						$oMain,
-						StorageType::CONFIG,
-						$this->tokenStorageKey($email)
-					);
-					$aData = \Tachyon\Util\Crypt::DecryptFromJSON($blob, $oMain->CryptKey());
-				}
-			} catch (\Throwable $e) {
-				return;
-			}
-		}
-
-		if (empty($aData['access_token']) || empty($aData['refresh_token']) || empty($aData['expires'])) {
-			return;
-		}
-
-		// Refresh if expired (or close to expiry)
-		if (\time() >= ((int)$aData['expires'] - 30)) {
-			$oO365 = $this->o365Connector();
-			if ($oO365) {
-				$tenant = $this->Config()->Get('plugin', 'tenant', 'common');
-				$aRefreshWrap = $oO365->getAccessToken(
-					\str_replace('{{tenant}}', $tenant, static::TOKEN_URI),
-					'refresh_token',
-					['refresh_token' => $aData['refresh_token']]
-				);
-
-				if (\is_array($aRefreshWrap) && isset($aRefreshWrap['code']) && 200 === (int)$aRefreshWrap['code']) {
-					$r = $aRefreshWrap['result'] ?? [];
-					if (!empty($r['access_token'])) {
-						$aData['access_token'] = $r['access_token'];
-					}
-					if (!empty($r['refresh_token'])) {
-						$aData['refresh_token'] = $r['refresh_token'];
-					}
-					$expiresIn = (int)($r['expires_in'] ?? 0);
-					if ($expiresIn > 0) {
-						$aData['expires'] = \time() + $expiresIn;
-						$aData['expires_in'] = $expiresIn;
-					}
-
-					// Persist updated bundle (encrypted).
-					if ($oAccount instanceof MainAccount) {
-						$oActions->StorageProvider()->Put(
-							$oAccount,
-							StorageType::SESSION,
-							\Tachyon\Utils::GetSessionToken(),
-							\Tachyon\Util\Crypt::EncryptToJSON($aData, $oAccount->CryptKey())
-						);
-					} else if ($oAccount instanceof \Tachyon\Model\AdditionalAccount) {
-						$oMain = $oActions->getMainAccountFromToken(false);
-						if ($oMain) {
-							$oActions->StorageProvider()->Put(
-								$oMain,
-								StorageType::CONFIG,
-								$this->tokenStorageKey($email),
-								\Tachyon\Util\Crypt::EncryptToJSON($aData, $oMain->CryptKey())
-							);
-						}
-					}
-				}
-			}
-		}
-
-		static::$auth[$email] = $aData;
-
-		// Inject XOAUTH2/OAUTHBEARER
-		$oSettings->passphrase = $aData['access_token'];
-		\array_unshift($oSettings->SASLMechanisms, 'OAUTHBEARER', 'XOAUTH2');
 	}
 
 	/**
@@ -395,10 +279,44 @@ class LoginO365Plugin extends \Tachyon\Plugins\AbstractPlugin
 		if (!$oMain) {
 			return;
 		}
-		$email = \strtolower(\Tachyon\Util\IDN::emailToAscii(\trim((string) $oActions->GetActionParam('emailToDelete', ''))));
+		$email = $this->oauthNormalise((string) $oActions->GetActionParam('emailToDelete', ''));
 		if ($email && $this->isSupportedEmail($email)) {
-			$oActions->StorageProvider()->Clear($oMain, StorageType::CONFIG, $this->tokenStorageKey($email));
+			$this->oauthClearTokens($oMain, $email);
 		}
+	}
+
+	/**
+	 * Finishes an add started before the cross-site redirect. Runs as an ordinary
+	 * authenticated request, so the session cookie is present and the main
+	 * account's CryptKey is reachable, neither of which is true in the callback.
+	 */
+	public function DoLoginO365Claim() : array
+	{
+		$sSecret = (string) $this->jsonParam('pickup', '');
+		if (!\strlen($sSecret)) {
+			return $this->jsonResponse(__FUNCTION__, false);
+		}
+
+		$oMain = \Tachyon\Api::Actions()->getMainAccountFromToken(false);
+		if (!$oMain) {
+			return $this->jsonResponse(__FUNCTION__, false);
+		}
+
+		$aPickup = $this->oauthTakePickup($sSecret);
+		if (!$aPickup || empty($aPickup['email']) || empty($aPickup['tokens']['access_token'])) {
+			return $this->jsonResponse(__FUNCTION__, false);
+		}
+
+		// The flow was started by one specific account; nobody else may finish it,
+		// even while authenticated.
+		if (!empty($aPickup['main']) && $aPickup['main'] !== $oMain->Email()) {
+			return $this->jsonResponse(__FUNCTION__, false);
+		}
+
+		$this->oauthAddAccount($oMain, (string) $aPickup['email'], $aPickup['tokens'],
+			(string) ($aPickup['identity'] ?? ''), (string) ($aPickup['name'] ?? ''));
+
+		return $this->jsonResponse(__FUNCTION__, true);
 	}
 
 	protected function o365Connector() : ?\OAuth2\Client
@@ -486,22 +404,12 @@ class LoginO365Plugin extends \Tachyon\Plugins\AbstractPlugin
 			return $this->jsonResponse(__FUNCTION__, false);
 		}
 
-		$nonce = $this->b64url(\random_bytes(16));
-		// Store nonce server-side to prevent replay; consumed on callback.
-		$oActions->StorageProvider()->Put(
-			null,
-			StorageType::NOBODY,
-			$this->stateNonceKey($nonce),
-			(string) \time()
-		);
-
-		$payload = [
-			'v' => 1,
-			'op' => $op,
-			'csrf' => \Tachyon\Utils::GetCsrfToken(),
-			'nonce' => $nonce,
-			'ts' => \time()
-		];
+		// Everything the callback needs is kept server side under a random nonce,
+		// and only the nonce travels through the browser. The state used to carry
+		// a CSRF token compared against Utils::GetCsrfToken() in the callback,
+		// which cannot work: that value comes from a cookie the cross-site
+		// redirect withholds, so the comparison was against a freshly minted one.
+		$payload = ['v' => 1, 'op' => $op];
 		if ('add' === $op && $oMainAccount) {
 			$payload['main'] = $oMainAccount->Email();
 			if ($name) {
@@ -512,7 +420,7 @@ class LoginO365Plugin extends \Tachyon\Plugins\AbstractPlugin
 			}
 		}
 
-		$state = $this->signState($payload);
+		$state = $this->oauthMintState($payload);
 		$tenant = $oConfig->Get('plugin', 'tenant', 'common');
 		$redirectUri = $this->redirectUri();
 
@@ -581,115 +489,4 @@ class LoginO365Plugin extends \Tachyon\Plugins\AbstractPlugin
 		return $useQuery ? ($base . '/?LoginO365') : ($base . '/LoginO365');
 	}
 
-	private function tokenStorageKey(string $emailLower) : string
-	{
-		// Stored under MAIN account StorageType::CONFIG (encrypted with main CryptKey).
-		// Email is hashed to avoid path/encoding issues across storage backends.
-		return 'login-o365.tokens.' . \sha1($emailLower);
-	}
-
-	private function storeAccountTokens(MainAccount $oMainAccount, string $email, array $tokenBundle) : void
-	{
-		$emailLower = \strtolower(\Tachyon\Util\IDN::emailToAscii($email));
-		\Tachyon\Api::Actions()->StorageProvider()->Put(
-			$oMainAccount,
-			StorageType::CONFIG,
-			$this->tokenStorageKey($emailLower),
-			\Tachyon\Util\Crypt::EncryptToJSON($tokenBundle, $oMainAccount->CryptKey())
-		);
-	}
-
-	private function stateNonceKey(string $nonce) : string
-	{
-		return 'login-o365.state.' . $nonce;
-	}
-
-	private function b64url(string $bin) : string
-	{
-		return \rtrim(\strtr(\base64_encode($bin), '+/', '-_'), '=');
-	}
-
-	private function b64urlDecode(string $b64url) /*: string|false*/
-	{
-		$pad = (4 - (\strlen($b64url) % 4)) % 4;
-		return \base64_decode(\strtr($b64url . \str_repeat('=', $pad), '-_', '+/'), true);
-	}
-
-	private function stateHmacKey() : string
-	{
-		// Uses the plugin client_secret (server-side only) as HMAC key.
-		// This prevents any user-controlled tampering of the state payload.
-		$key = \trim($this->Config()->getDecrypted('plugin', 'client_secret', ''));
-		if (!$key) {
-			// Fallback for misconfiguration; keeps behavior deterministic.
-			$key = 'login-o365';
-		}
-		return $key;
-	}
-
-	private function signState(array $payload) : string
-	{
-		$json = \json_encode($payload);
-		if (!$json) {
-			$json = '{}';
-		}
-		$payloadB64 = $this->b64url($json);
-		$sig = \hash_hmac('sha256', $payloadB64, $this->stateHmacKey(), true);
-		return $payloadB64 . '.' . $this->b64url($sig);
-	}
-
-	/**
-	 * Verify signature + CSRF + nonce, then consumes nonce to prevent replay.
-	 * Returns decoded payload on success, null on failure.
-	 */
-	private function verifyAndConsumeState(string $state) : ?array
-	{
-		$parts = \explode('.', $state, 2);
-		if (2 !== \count($parts)) {
-			return null;
-		}
-		[$payloadB64, $sigB64] = $parts;
-		$sig = $this->b64urlDecode($sigB64);
-		if ($sig === false) {
-			return null;
-		}
-
-		$expected = \hash_hmac('sha256', $payloadB64, $this->stateHmacKey(), true);
-		if (!\hash_equals($expected, $sig)) {
-			return null;
-		}
-
-		$payloadJson = $this->b64urlDecode($payloadB64);
-		if ($payloadJson === false) {
-			return null;
-		}
-		$payload = \json_decode($payloadJson, true);
-		if (!\is_array($payload) || empty($payload['csrf']) || empty($payload['nonce']) || empty($payload['op'])) {
-			return null;
-		}
-
-		// Must match the current browser session.
-		if ($payload['csrf'] !== \Tachyon\Utils::GetCsrfToken()) {
-			return null;
-		}
-
-		// Replay protection: nonce must exist server-side and is consumed once.
-		$oActions = \Tachyon\Api::Actions();
-		$key = $this->stateNonceKey((string) $payload['nonce']);
-		$seen = $oActions->StorageProvider()->Get(null, StorageType::NOBODY, $key);
-		if (!$seen) {
-			return null;
-		}
-
-		$ts = (int) ($payload['ts'] ?? 0);
-		if ($ts && \abs(\time() - $ts) > 900) { // 15 minutes
-			// Expired: clear nonce to avoid accumulating stale entries.
-			$oActions->StorageProvider()->Clear(null, StorageType::NOBODY, $key);
-			return null;
-		}
-
-		$oActions->StorageProvider()->Clear(null, StorageType::NOBODY, $key);
-
-		return $payload;
-	}
 }
