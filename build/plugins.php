@@ -29,6 +29,16 @@ if (is_file(ROOT_DIR . '/tachyon/v/0.0.0/app/libraries/Tachyon/Plugins/AbstractP
 	require ROOT_DIR . '/tachyon/v/0.0.0/app/libraries/RainLoop/Plugins/AbstractPlugin.php';
 }
 
+// Reading a plugin's metadata means declaring its class, and a trait it composes
+// has to exist by then. There is no autoloader here, so the traits under Plugins/
+// are loaded up front. Only traits: the classes beside them compose things of
+// their own from elsewhere in the tree, so requiring those would just move the
+// problem (Manager needs MailSo\Log\Inherit, for one), and a plugin cannot "use"
+// a class anyway.
+foreach (glob(ROOT_DIR . '/tachyon/v/0.0.0/app/libraries/Tachyon/Plugins/*.php') as $file) {
+	preg_match('/^\s*trait\s+\w/m', file_get_contents($file)) && require_once $file;
+}
+
 $keys = [
 	'author',
 	'category',
