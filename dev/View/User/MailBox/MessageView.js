@@ -51,6 +51,9 @@ import { PgpUserStore } from 'Stores/User/Pgp';
 
 import { MimeToMessage } from 'Mime/Utils';
 
+import { ThemeStore } from 'Stores/Theme';
+import { horizontalSwipe } from 'Common/Swipe';
+
 import { MessageModel } from 'Model/Message';
 
 import { showScreenPopup } from 'Knoin/Knoin';
@@ -358,6 +361,57 @@ export class MailMessageView extends AbstractViewRight {
 	}
 
 	/**
+	 * Swipe sideways to reach the next or previous message, which on a phone is
+	 * the only comfortable way: the list is hidden while a message is open, so
+	 * otherwise you close the message, find your place again, and tap the next one.
+	 * Same two commands as the chevrons in the toolbar.
+	 */
+	initSwipeNavigation(dom) {
+		const scroller = dom.querySelector('#messageItem');
+		if (!scroller) {
+			return;
+		}
+
+		const view = dom.querySelector('.messageView'),
+			// Shared so the cue cannot appear at a distance the gesture will not act on.
+			threshold = 60,
+			// -1 heads towards the next message, 1 towards the previous one.
+			atEdge = direction => (0 > direction
+				? scroller.scrollLeft + scroller.clientWidth >= scroller.scrollWidth - 1
+				: 1 > scroller.scrollLeft);
+
+		horizontalSwipe(scroller, {
+			threshold: threshold,
+
+			enabled: () => ThemeStore.isMobile() && !!currentMessage() && !this.messageListOrViewLoading(),
+
+			// A wide message scrolls sideways of its own accord. While it still has
+			// somewhere to go in that direction the gesture is the content's, not ours.
+			canStart: atEdge,
+
+			onMove: dx => {
+				if (!dx) {
+					// Dropping the class hands the snap back to the stylesheet, which
+					// is also where honouring reduced motion belongs.
+					scroller.classList.remove('swiping');
+					scroller.style.transform = '';
+					view?.removeAttribute('data-swipe');
+					return;
+				}
+				// No transition while the finger is down, or it lags behind it.
+				scroller.classList.add('swiping');
+				// Resistance rather than a hard stop, so the end of the travel is
+				// felt instead of hit.
+				const max = scroller.clientWidth / 4;
+				scroller.style.transform = 'translateX(' + (max * Math.tanh(dx / max)).toFixed(1) + 'px)';
+				view?.setAttribute('data-swipe', threshold <= Math.abs(dx) ? (0 > dx ? 'next' : 'prev') : '');
+			},
+
+			onCommit: direction => (0 > direction ? this.goDownCommand() : this.goUpCommand())
+		});
+	}
+
+	/**
 	 * @param {string} sType
 	 * @returns {void}
 	 */
@@ -366,6 +420,8 @@ export class MailMessageView extends AbstractViewRight {
 	}
 
 	onBuild(dom) {
+		this.initSwipeNavigation(dom);
+
 		const eqs = (ev, s) => ev.target.closestWithin(s, dom);
 		dom.addEventListener('click', event => {
 			let el = eqs(event, 'a');

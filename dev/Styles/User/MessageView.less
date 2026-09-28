@@ -43,6 +43,34 @@
 	height: calc(100% - 50px);
 	position: relative;
 
+	/*
+	 * Cue for the swipe that moves between messages. It appears only once the
+	 * gesture has travelled far enough to commit, so it doubles as the signal
+	 * that letting go now will do something. The chevrons are the same two the
+	 * toolbar uses, so what it means should need no explaining.
+	 */
+	&[data-swipe="prev"]::after,
+	&[data-swipe="next"]::after {
+		position: absolute;
+		top: 50%;
+		z-index: 2;
+		transform: translateY(-50%);
+		pointer-events: none;
+		font-size: 200%;
+		opacity: .75;
+		color: var(--panel-clr, #333);
+	}
+
+	&[data-swipe="prev"]::after {
+		.icon-mask(chevron-left);
+		left: 6px;
+	}
+
+	&[data-swipe="next"]::after {
+		.icon-mask(chevron-right);
+		right: 6px;
+	}
+
 	.priorityHigh .subject::before {
 		content: '! '; /*❗*/
 		color: red;
@@ -253,6 +281,23 @@
 	height: 100%;
 	overflow: auto;
 	scroll-behavior: smooth;
+
+	/*
+	 * Swiping to the next or previous message drags this with the finger. The
+	 * offset is set inline, so the only job here is the animation back to rest,
+	 * which must not apply while the finger is still down.
+	 */
+	transition: transform 0.2s ease-out;
+
+	&.swiping {
+		transition: none;
+		/* Nothing to select or tap while a swipe is in progress. */
+		user-select: none;
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		transition: none;
+	}
 
 	.loading {
 		text-align: center;
