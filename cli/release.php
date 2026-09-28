@@ -1,6 +1,49 @@
 #!/usr/bin/php
 <?php
 define('ROOT_DIR', dirname(__DIR__));
+
+/**
+ * Write $mtime into every header of an uncompressed tar and repair the checksums.
+ * POSIX tar keeps mtime in 12 bytes at offset 136 and the checksum in 8 at 148,
+ * the checksum being the byte sum of the header with its own field read as spaces.
+ */
+function tar_stamp_mtime(string $file, int $mtime) : int
+{
+	$fh = fopen($file, 'r+b');
+	if (!$fh) {
+		throw new RuntimeException("Cannot open {$file}");
+	}
+	$count = 0;
+	try {
+		while (512 === strlen($header = (string) fread($fh, 512))) {
+			// A run of NUL blocks marks the end of the archive.
+			if ('' === trim($header, "\0")) {
+				break;
+			}
+			$at = ftell($fh) - 512;
+			$size = trim(substr($header, 124, 12), " \0");
+			$size = strlen($size) ? (int) octdec($size) : 0;
+
+			$header = substr_replace($header, sprintf('%011o', $mtime) . ' ', 136, 12);
+			$sum = 0;
+			$blanked = substr_replace($header, '        ', 148, 8);
+			for ($i = 0; $i < 512; ++$i) {
+				$sum += ord($blanked[$i]);
+			}
+			$header = substr_replace($header, sprintf('%06o', $sum) . "\0 ", 148, 8);
+
+			fseek($fh, $at);
+			fwrite($fh, $header);
+			++$count;
+
+			// Skip the file data, which is padded out to a whole block.
+			fseek($fh, $at + 512 + (int) ceil($size / 512) * 512);
+		}
+	} finally {
+		fclose($fh);
+	}
+	return $count;
+}
 chdir(ROOT_DIR);
 
 $options = getopt('', ['aur','docker','skip-gulp','debian','nextcloud','owncloud','cpanel','sign']);
@@ -160,7 +203,16 @@ $tar->addFile('README.md');
 
 $zip->close();
 
-$tar->compress(Phar::GZ);
+// PharData gives every tar entry an mtime of 0, so an install deployed from the
+// tarball serves "Last-Modified: Thu, 01 Jan 1970" for every asset. Browsers
+// then have nothing to revalidate against, and a bad cached copy can outlive a
+// reinstall. The zip is unaffected. Stamp the build time in before compressing,
+// and do the gzip here rather than through compress(), which would rebuild the
+// headers from Phar's own view and put the zeroes back.
+unset($tar);
+$entries = tar_stamp_mtime($tar_destination, time());
+echo "  tar: stamped mtime on {$entries} entries\n";
+file_put_contents("{$tar_destination}.gz", gzencode(file_get_contents($tar_destination), 9));
 unlink($tar_destination);
 $tar_destination .= '.gz';
 
