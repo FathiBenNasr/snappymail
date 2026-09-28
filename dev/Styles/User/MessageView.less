@@ -57,8 +57,15 @@
 		transform: translateY(-50%);
 		pointer-events: none;
 		font-size: 200%;
-		opacity: .75;
-		color: var(--panel-clr, #333);
+		opacity: .85;
+		/*
+		 * .icon-mask paints with currentColor. --main-color is the panel ink every
+		 * theme defines, and it carries a value per colour scheme, so this follows
+		 * light and dark without being told. The first attempt invented a
+		 * --panel-clr that exists nowhere, so every theme silently took a hardcoded
+		 * #333 fallback and the cue was invisible on a dark background.
+		 */
+		color: var(--main-color, currentColor);
 	}
 
 	&[data-swipe="prev"]::after {
