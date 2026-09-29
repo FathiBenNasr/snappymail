@@ -7,8 +7,8 @@ class ChangePasswordPlugin extends \Tachyon\Plugins\AbstractPlugin
 {
 	const
 		NAME     = 'Change Password',
-		VERSION  = '2.38',
-		RELEASE  = '2024-04-22',
+		VERSION  = '2.39',
+		RELEASE  = '2026-09-29',
 		REQUIRED = '2.36.1',
 		CATEGORY = 'Security',
 		DESCRIPTION = 'Extension to allow users to change their passwords';

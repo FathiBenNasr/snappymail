@@ -5,8 +5,8 @@ class NextcloudPlugin extends \Tachyon\Plugins\AbstractPlugin
 	const
 		NAME = 'Nextcloud',
 		// Keep upstream metadata if you prefer; this is not functional.
-		VERSION = '2.39.1',
-		RELEASE  = '2026-08-31',
+		VERSION = '2.39.2',
+		RELEASE  = '2026-09-29',
 		CATEGORY = 'Integrations',
 		DESCRIPTION = 'Integrate with Nextcloud v20+',
 		REQUIRED = '2.38.0';

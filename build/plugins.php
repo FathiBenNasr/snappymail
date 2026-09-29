@@ -20,6 +20,71 @@ $githubBase = $releaseTag
 
 $manifest = [];
 
+/**
+ * Hash of everything a human or Weblate can change in a plugin. Derived files are
+ * left out: the .min.js are regenerated during this build, so including them
+ * would make the hash depend on the minifier rather than on the plugin.
+ */
+function plugin_content_sha(string $dir) : string
+{
+	$files = [];
+	$it = new RecursiveIteratorIterator(
+		new RecursiveDirectoryIterator($dir, FilesystemIterator::SKIP_DOTS));
+	foreach ($it as $file) {
+		$path = str_replace('\\', '/', $file->getPathname());
+		if ($file->isFile()
+		 && !preg_match('/\.(min\.(js|css)|bak)$/', $path)
+		 && !str_contains($path, '/.git')) {
+			$files[$path] = sha1_file($path);
+		}
+	}
+	ksort($files);
+	return sha1(json_encode($files));
+}
+
+/**
+ * The version to publish: whatever the plugin declares, plus a build number that
+ * rises each time its contents change.
+ *
+ * Weblate merges a translation into plugins/x/langs/ and never touches index.php,
+ * so the declared version stays put. packages.json then advertises a version the
+ * install already has, repository.php finds canBeUpdated false, and the admin
+ * panel offers nothing. The translation sits in the package, unreachable.
+ *
+ * The previous state comes from the committed packages.json, so this needs no git
+ * and works the same in a shallow clone or a Docker context without .git.
+ */
+function plugin_publish_version(string $declared, string $sha, ?array $previous) : string
+{
+	$build = 0;
+	if ($previous && preg_match('/^' . preg_quote($declared, '/') . '(?:\.(\d+))?$/', (string) ($previous['version'] ?? ''), $m)) {
+		// Same declared version as last time, so carry its build number and move
+		// it on only if the contents actually differ.
+		$build = (int) ($m[1] ?? 0);
+		// An entry from before this existed has no hash to compare against. Adopt
+		// the current one rather than bumping, or the first release after this
+		// would advertise an update for every plugin at once and mean nothing by
+		// any of them. Anything genuinely pending is bumped by hand instead.
+		if (isset($previous['sha']) && $sha !== $previous['sha']) {
+			++$build;
+		}
+	}
+	// A previous version that does not match means the author bumped the real
+	// version, which supersedes any build number we had added to the old one.
+	return $build ? "{$declared}.{$build}" : $declared;
+}
+
+// Previously published state, to tell whether a plugin's contents moved. Read
+// before anything writes over it further down.
+$published = [];
+if (is_file(ROOT_DIR . '/packages.json')) {
+	foreach (json_decode((string) file_get_contents(ROOT_DIR . '/packages.json'), true) ?: [] as $item) {
+		if (!empty($item['id'])) {
+			$published[$item['id']] = $item;
+		}
+	}
+}
+
 // Load AbstractPlugin so plugin classes can extend it
 if (is_file(ROOT_DIR . '/tachyon/v/0.0.0/app/libraries/Tachyon/Plugins/AbstractPlugin.php')) {
 	require ROOT_DIR . '/tachyon/v/0.0.0/app/libraries/Tachyon/Plugins/AbstractPlugin.php';
@@ -66,9 +131,13 @@ foreach (glob(ROOT_DIR . '/plugins/*', GLOB_NOSORT | GLOB_ONLYDIR) as $dir) {
 				$manifest_item[$key] = $value;
 			}
 		}
-		$version = $manifest_item['version'] ?? '0';
-		if (0 < floatval($version)) {
-			echo "+ {$name} {$version}\n";
+		$declared = $manifest_item['version'] ?? '0';
+		if (0 < floatval($declared)) {
+			$sha = plugin_content_sha($dir);
+			$version = plugin_publish_version($declared, $sha, $published[$name] ?? null);
+			$manifest_item['version'] = $version;
+			$manifest_item['sha'] = $sha;
+			echo "+ {$name} {$version}" . ($version === $declared ? '' : " (declared {$declared})") . "\n";
 
 			// Minify JavaScript
 			foreach (glob("{$dir}/*.js") as $file) {
@@ -109,7 +178,7 @@ foreach (glob(ROOT_DIR . '/plugins/*', GLOB_NOSORT | GLOB_ONLYDIR) as $dir) {
 			$manifest[$name] = $manifest_item;
 
 		} else {
-			echo "- {$name} {$version}\n";
+			echo "- {$name} {$declared}\n";
 		}
 	} else {
 		echo "- " . basename($dir) . "\n";

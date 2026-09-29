@@ -21,8 +21,8 @@ class LoginO365Plugin extends \Tachyon\Plugins\AbstractPlugin
 {
 	const
 		NAME     = 'Office365/Outlook OAuth2',
-		VERSION  = '0.5',
-		RELEASE  = '2026-09-27',
+		VERSION  = '0.6',
+		RELEASE  = '2026-09-29',
 		REQUIRED = '2.36.1',
 		CATEGORY = 'Login',
 		DESCRIPTION = 'Office365/Outlook IMAP, Sieve & SMTP login using RFC 7628 OAuth2';

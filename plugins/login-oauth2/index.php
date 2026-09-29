@@ -14,8 +14,8 @@ class LoginOAuth2Plugin extends \Tachyon\Plugins\AbstractPlugin
 {
 	const
 		NAME     = 'OAuth2',
-		VERSION  = '2.0',
-		RELEASE  = '2026-09-27',
+		VERSION  = '2.1',
+		RELEASE  = '2026-09-29',
 		REQUIRED = '2.36.1',
 		CATEGORY = 'Login',
 		DESCRIPTION = 'IMAP, Sieve & SMTP login using RFC 7628 OAuth2, for any provider';

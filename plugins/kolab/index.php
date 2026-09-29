@@ -4,8 +4,8 @@ class KolabPlugin extends \Tachyon\Plugins\AbstractPlugin
 {
 	const
 		NAME = 'Kolab',
-		VERSION = '2.37',
-		RELEASE  = '2024-03-29',
+		VERSION = '2.38',
+		RELEASE  = '2026-09-29',
 		CATEGORY = 'Contacts',
 		DESCRIPTION = 'Use an Address Book of Kolab.',
 		REQUIRED = '2.36.0';

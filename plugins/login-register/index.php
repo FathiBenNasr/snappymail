@@ -4,8 +4,8 @@ class LoginRegisterPlugin extends \Tachyon\Plugins\AbstractPlugin
 {
 	const
 		NAME     = 'Register and Forgot',
-		VERSION  = '2.2',
-		RELEASE  = '2024-03-29',
+		VERSION  = '2.3',
+		RELEASE  = '2026-09-29',
 		REQUIRED = '2.36.0',
 		CATEGORY = 'Login',
 		DESCRIPTION = 'Links on login screen for registration and forgotten password';
