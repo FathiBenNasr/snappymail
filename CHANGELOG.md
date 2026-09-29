@@ -1,3 +1,26 @@
+## 4.3.0 - 2026-09-29
+
+### Added
+- OAuth2 for additional accounts, not only the one you log in with. A Gmail, Office 365 or generic OAuth2 account can be added from Settings, Accounts without an app password, and so without turning on 2-step verification to obtain one (#90)
+- The generic OAuth2 plugin is now genuinely generic. Its endpoints, scopes, userinfo URL and the domains it answers for are configuration, so it serves any provider that does RFC 7628 and can say which address was authorized
+- Swipe sideways on a phone to reach the next or previous message. The list is hidden while a message is open, so reading a run of mail otherwise meant closing each one and finding your place again. The message follows your finger, and a chevron appears once the gesture has gone far enough to act on (#102)
+- Delivery receipts carry an envelope id, so a notification arriving days later can be tied to the message that caused it (#96)
+
+### Fixed
+- Encrypting a message without also signing it broke both send and save, with `TypeError: e.findIndex is not a function` and nothing sent or saved. Choosing the crypto method in 4.2.4 started treating a value as a list that collapses to `false` when the feature is off, and for a draft regardless. Inherited from SnappyMail, where nothing ever did more than read its length (#103)
+- S/MIME messages would not decrypt on Exchange. The MIME headers openssl needs were read from `BODY[<part>.MIME]`, which Exchange answers with `NIL`, correctly: the message is not multipart, so there is no part-level header and the Content-Type is the message's own. The body reached openssl as a bare base64 blob with nothing reporting why. Diagnosed from an IMAP trace supplied by @reaisinc (#92)
+- View original, Download original and attachment downloads failed in the installed app. Running as a PWA, a link opened in a tab lands in the browser, a separate context, so the request goes out cross-site and without the session cookie that identifies the account. The content is now fetched inside the app and handed over as a blob; an ordinary browser tab still streams from the server as before (#81)
+- Delivery receipts asked for success and failure but never delay. Many servers decline success notifications as backscatter protection while honouring delay, so a queued or retried message reported nothing at all (#96)
+- Requesting a delivery receipt did nothing on a domain set to use `php mail()`, which cannot pass the SMTP parameters one needs. The request was discarded in silence. The admin panel now says what the setting costs, beside the setting (#96)
+- The Office 365 add-account flow could not work on a default install. Its signed state carried a CSRF token compared against the session's, and that value comes from a cookie the cross-site redirect withholds, so a fresh one was minted and the comparison could never match. This guarded its plain login too (#90)
+- The Gmail plugin's token refresh wrote the new expiry to an undefined variable, so every IMAP, SMTP and Sieve connection refreshed the token again for the life of the session
+
+### Changed
+- Release tarballs carry real timestamps. `PharData` gave every entry an mtime of 1970, so an install deployed from the tarball served `Last-Modified: Thu, 01 Jan 1970` for every asset, leaving browsers nothing to revalidate against and letting a bad cached copy outlive a reinstall. The zip was never affected
+- Russian and Chinese are more complete, thanks to @lvarnava and @dreamawake
+
+---
+
 ## 4.2.5 - 2026-09-23
 
 ### Added
