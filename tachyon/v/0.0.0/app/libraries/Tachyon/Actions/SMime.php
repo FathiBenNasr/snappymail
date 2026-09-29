@@ -93,24 +93,32 @@ trait SMime
 		$oImapClient = $this->ImapClient();
 		$oImapClient->FolderExamine($sFolderName);
 
-		if ('TEXT' === $sPartId) {
-			$oFetchResponse = $oImapClient->Fetch([
-				FetchType::BODY_PEEK.'['.$sPartId.']',
-				// An empty section specification refers to the entire message, including the header.
-				// But Dovecot does not return it with BODY.PEEK[1], so we also use BODY.PEEK[1.MIME].
-				FetchType::BODY_HEADER_PEEK
-			], $iUid, true)[0];
-			$sBody = $oFetchResponse->GetFetchValue(FetchType::BODY_HEADER);
-		} else {
-			$oFetchResponse = $oImapClient->Fetch([
-				FetchType::BODY_PEEK.'['.$sPartId.']',
-				// An empty section specification refers to the entire message, including the header.
-				// But Dovecot does not return it with BODY.PEEK[1], so we also use BODY.PEEK[1.MIME].
-				FetchType::BODY_PEEK.'['.$sPartId.'.MIME]'
-			], $iUid, true)[0];
-			$sBody = $oFetchResponse->GetFetchValue(FetchType::BODY.'['.$sPartId.'.MIME]');
+		// openssl needs the MIME headers in front of the body, and where they live
+		// depends on the message. For a part inside a multipart they are the part's
+		// own; for a message that is nothing but the encrypted blob there is no part
+		// header at all and the Content-Type is the message's.
+		$aFetch = array(
+			FetchType::BODY_PEEK.'['.$sPartId.']',
+			// An empty section specification refers to the entire message, including the header.
+			// But Dovecot does not return it with BODY.PEEK[1], so we also use BODY.PEEK[1.MIME].
+			FetchType::BODY_HEADER_PEEK
+		);
+		if ('TEXT' !== $sPartId) {
+			$aFetch[] = FetchType::BODY_PEEK.'['.$sPartId.'.MIME]';
 		}
-		$sBody .= $oFetchResponse->GetFetchValue(FetchType::BODY.'['.$sPartId.']');
+		$oFetchResponse = $oImapClient->Fetch($aFetch, $iUid, true)[0];
+
+		$sHeaders = 'TEXT' === $sPartId
+			? ''
+			: (string) $oFetchResponse->GetFetchValue(FetchType::BODY.'['.$sPartId.'.MIME]');
+		if (!\strlen(\trim($sHeaders))) {
+			// Exchange answers BODY[1.MIME] with NIL when the message is not
+			// multipart, which is correct of it: a single part message has no part
+			// level header to give. Without this the body went to openssl as a bare
+			// base64 blob and was refused, with nothing anywhere saying why.
+			$sHeaders = (string) $oFetchResponse->GetFetchValue(FetchType::BODY_HEADER);
+		}
+		$sBody = $sHeaders . $oFetchResponse->GetFetchValue(FetchType::BODY.'['.$sPartId.']');
 
 		$SMIME = $this->SMIME();
 		$SMIME->setCertificate($sCertificate);
