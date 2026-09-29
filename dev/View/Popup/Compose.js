@@ -1515,7 +1515,6 @@ export class ComposePopupView extends AbstractViewPopup {
 		key && options.push(['GnuPG', key]);
 		identity.smimeKeyValid() && identity.smimeCertificateValid() && identity.email === email
 			&& options.push(['S/MIME']);
-		console.dir({signOptions: options});
 		this.signOptions(options);
 		this.keepCryptoChoice();
 	}
@@ -1610,7 +1609,6 @@ export class ComposePopupView extends AbstractViewPopup {
 			}
 		}
 
-		console.dir({encryptOptions:options});
 		this.encryptOptions(options);
 		this.keepCryptoChoice();
 	}
