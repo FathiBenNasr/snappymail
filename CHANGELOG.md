@@ -1,3 +1,13 @@
+## 4.3.1 - 2026-09-29
+
+### Fixed
+- Plugin translations never reached an install. Weblate merges a translation into a plugin's `langs/` directory and never touches its `index.php`, so the declared version stayed put, `packages.json` advertised the version the install already had, and Admin, Extensions offered nothing to update. The translation was inside the published package the whole time with no way to get at it. The published version now carries a build number that rises whenever a plugin's contents change, so a merged translation is offered as an update. Reported by @lvarnava in discussion #33
+
+### Changed
+- Eight plugins are republished so their pending work actually ships: Russian and Danish translations for change-password, kolab, login-register, nextcloud, search-filters and two-factor-auth, and the OAuth2 fixes in login-o365 and login-oauth2, which went out in 4.3.0 under versions that had already been published
+
+---
+
 ## 4.3.0 - 2026-09-29
 
 ### Added
