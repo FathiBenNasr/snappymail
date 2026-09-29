@@ -1,7 +1,11 @@
 # syntax=docker/dockerfile:1
 
 FROM alpine:3.18.5 AS builder
-RUN apk add --no-cache php82 php82-json php-phar php-zip
+# php-phar and php-zip without the version suffix belong to Alpine's default PHP,
+# which on 3.18 is 8.1, so they pulled it in and "php" resolved to 8.1 while php82
+# sat unused. The build then rejected anything needing the 8.2 this project asks
+# for, which is also what the final image runs.
+RUN apk add --no-cache php82 php82-json php82-phar php82-zip
 RUN apk add --no-cache npm
 RUN npm install -g gulp
 WORKDIR /source
@@ -10,7 +14,7 @@ RUN npm ci
 COPY . .
 # Patch release.php with hotfix from: https://github.com/xgbstar1/snappymail-docker/blob/main/Dockerfile, so that release.php doesn't fail with error
 RUN sed -i 's_^if.*rename.*tachyon.v.0.0.0.*$_if (!!system("mv tachyon/v/0.0.0 tachyon/v/{$package->version}")) {_' cli/release.php  || true
-RUN php release.php
+RUN php82 release.php
 RUN set -eux; \
     VERSION=$( ls build/dist/releases/webmail ); \
     ls -al build/dist/releases/webmail/$VERSION/tachyon-$VERSION.tar.gz; \
