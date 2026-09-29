@@ -1745,8 +1745,11 @@ export class ComposePopupView extends AbstractViewPopup {
 				linkedData: []
 			},
 			recipients = draft ? [identity.email] : this.allRecipients(),
-			signOptions = !draft && this.doSign() && this.signOptions(),
-			encryptOptions = this.doEncrypt() && this.encryptOptions(),
+			// Both end up as a list either way. They used to collapse to false when
+			// the feature was off, or when saving a draft, which reads fine against
+			// .length but not against the list operations further down.
+			signOptions = (!draft && this.doSign() && this.signOptions()) || [],
+			encryptOptions = (this.doEncrypt() && this.encryptOptions()) || [],
 			isHtml = this.oEditor.isHtml();
 
 		if (isHtml) {
