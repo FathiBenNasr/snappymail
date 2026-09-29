@@ -25,7 +25,8 @@ import {
 } from 'Common/Globals';
 
 import { arrayLength } from 'Common/Utils';
-import { download, downloadZip, mailToHelper, showMessageComposer, moveAction } from 'Common/UtilsUser';
+import { download, downloadZip, mailToHelper, showMessageComposer, moveAction,
+	isStandalone, isRawLink, openRawInNewContext } from 'Common/UtilsUser';
 import { isFullscreen, exitFullscreen, toggleFullscreen } from 'Common/Fullscreen';
 
 import { SMAudio } from 'Common/Audio';
@@ -427,6 +428,15 @@ export class MailMessageView extends AbstractViewRight {
 			let el = eqs(event, 'a');
 			if (el && 0 === event.button && mailToHelper(el.href)) {
 				stopEvent(event);
+				return;
+			}
+
+			// View original and Download original point at the Raw endpoints and
+			// open in a tab, which inside an installed app means a context that
+			// carries no session cookie. Fetch it here instead, where it does.
+			if (el && 0 === event.button && isStandalone() && isRawLink(el.href)) {
+				stopEvent(event);
+				openRawInNewContext(el.href, el.download || '');
 				return;
 			}
 

@@ -73,6 +73,10 @@ loadAccountsAndIdentities = () => {
  */
 download = (link, name = "") => {
 	console.log('download: '+link);
+	if (isStandalone()) {
+		openRawInNewContext(link, name);
+		return;
+	}
 	// Firefox 98 issue https://github.com/the-djmaze/snappymail/issues/301
 	if (ThemeStore.isMobile() || /firefox/i.test(navigator.userAgent)) {
 		open(link, '_blank');
@@ -87,6 +91,58 @@ download = (link, name = "") => {
 		oLink.remove();
 	}
 },
+
+/**
+ * Installed as a PWA the app has its own browsing context, so a link opened in
+ * a tab lands in the browser instead: a different context, which the browser
+ * treats as cross-site. It marks the request Sec-Fetch-Site: cross-site and
+ * withholds the SameSite=Strict session cookie. The Raw endpoints work out which
+ * account is asking from that cookie, so the tab receives nothing at all and
+ * shows a blank page (#81).
+ */
+isStandalone = () =>
+	// Any display mode but "browser" means its own context, and iOS reports it
+	// through navigator rather than a media query.
+	matchMedia(['standalone', 'minimal-ui', 'fullscreen', 'window-controls-overlay']
+		.map(mode => '(display-mode: ' + mode + ')').join(',')).matches
+	|| true === navigator.standalone,
+
+isRawLink = href => {
+	try {
+		const url = new URL(href, location.href);
+		return url.origin === location.origin && url.search.includes('/Raw/');
+	} catch {
+		return false;
+	}
+},
+
+/**
+ * Fetch here, where the cookie still applies, and hand the browser bytes it
+ * already has. No second request means nothing for the cookie rules to apply to.
+ */
+openRawInNewContext = (link, name = '') =>
+	rl.fetch(link)
+	.then(response => response.ok ? response.blob() : Promise.reject(Error('HTTP ' + response.status)))
+	.then(blob => {
+		const url = URL.createObjectURL(blob);
+		if (name) {
+			const oLink = createElement('a', { href: url, download: name });
+			doc.body.appendChild(oLink).click();
+			oLink.remove();
+		} else {
+			open(url, '_blank');
+			focus();
+		}
+		// Nothing tells us when the other context is finished with it, so hold it
+		// long enough to be opened and let it go rather than leak for the session.
+		setTimeout(() => URL.revokeObjectURL(url), 60000);
+	})
+	.catch(e => {
+		console.error(e);
+		// Better a tab that reports the real failure than one that silently does
+		// nothing, and outside a PWA this is what would have happened anyway.
+		open(link, '_blank');
+	}),
 
 downloadZip = (name, hashes, onError, fTrigger, folder) => {
 	if (hashes.length) {
