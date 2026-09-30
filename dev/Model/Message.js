@@ -700,7 +700,11 @@ export class MessageModel extends AbstractModel {
 			await Remote.post('SMimeDecryptMessage', null, params).then(response => {
 				if (response?.Result?.data) {
 					message.smimeDecrypted(true);
-					MimeToMessage(response.Result.data, message);
+					// Sent base64 so the raw MIME bytes survive the JSON response,
+					// which would otherwise replace anything that is not valid UTF-8.
+					// atob gives a byte-per-character string, which is what the MIME
+					// parser wants before it applies each part's declared charset.
+					MimeToMessage(atob(response.Result.data), message);
 					message.html() ? message.viewHtml() : message.viewPlain();
 					pass && pass.remember && Passphrases.handle(identity, pass.password);
 					if ('signed' in response.Result) {
@@ -728,7 +732,8 @@ export class MessageModel extends AbstractModel {
 			Remote.post('SMimeVerifyMessage', null, params).then(response => {
 				if (response?.Result) {
 					if (response.Result.body) {
-						MimeToMessage(response.Result.body, message);
+						// base64, as with decrypt above
+						MimeToMessage(atob(response.Result.body), message);
 						message.html() ? message.viewHtml() : message.viewPlain();
 					}
 					data.success = response.Result.success;

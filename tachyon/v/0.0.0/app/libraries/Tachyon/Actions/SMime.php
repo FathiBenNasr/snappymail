@@ -137,6 +137,14 @@ trait SMime
 					$result['data'] = $signed['body'];
 				}
 			}
+			// Base64 for the trip home. What comes out of openssl is a MIME entity
+			// of raw bytes in whatever charset each part declares, and the JSON
+			// response is encoded with JSON_INVALID_UTF8_SUBSTITUTE (Utils::jsonEncode),
+			// which turns every byte that is not valid UTF-8 into U+FFFD. A
+			// windows-1252 part from Outlook or Thunderbird loses its non-breaking
+			// spaces that way, and nothing downstream can get them back. The client
+			// decodes this and its MIME parser applies the declared charset itself.
+			$result['data'] = \base64_encode($result['data']);
 		}
 
 		return $this->DefaultResponse($result ?: false);
@@ -178,6 +186,12 @@ trait SMime
 			foreach ($certificates as $certificate) {
 				$this->SMIME()->storeCertificate($certificate);
 			}
+		}
+
+		if (!empty($result['body'])) {
+			// Same reason as the decrypt path above: raw MIME cannot survive the
+			// JSON response intact.
+			$result['body'] = \base64_encode($result['body']);
 		}
 
 		return $this->DefaultResponse($result);
