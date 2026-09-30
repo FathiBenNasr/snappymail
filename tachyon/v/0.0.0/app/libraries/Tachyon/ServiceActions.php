@@ -108,6 +108,18 @@ class ServiceActions
 						$this->oActions->logWrite("{$_POST['XToken']} !== {$token} for {$sEmail}", \LOG_ERR, 'XToken');
 						throw new Exceptions\ClientException(Notifications::InvalidToken, null, 'XToken mismatch');
 					}
+				} else {
+					// A state-changing action must never be triggerable by a bare
+					// headerless GET (e.g. <img src> or a top-level navigation):
+					// without the X-SM-Token header the token has to arrive as a
+					// query parameter. The first-party UI always sends the header,
+					// so this only affects headerless callers.
+					if (empty($_GET['XToken']) || $_GET['XToken'] !== $token) {
+						$oAccount = $this->oActions->getAccountFromToken(false);
+						$sEmail = $oAccount ? $oAccount->Email() : 'guest';
+						$this->oActions->logWrite("missing XToken for {$sEmail}", \LOG_ERR, 'Token');
+						throw new Exceptions\ClientException(Notifications::InvalidToken, null, 'XToken mismatch');
+					}
 				}
 			}
 
