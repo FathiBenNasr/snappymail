@@ -20,7 +20,11 @@ abstract class Request
 		$max_redirects = 0,
 		$verify_peer = false,
 		$proxy = null,
-		$proxy_auth = null;
+		$proxy_auth = null,
+		// When true, refuse to fetch URLs whose host resolves to a
+		// private, reserved, loopback or link-local IP. Enable for
+		// request paths where the URL is attacker-influenced.
+		$block_private_ips = false;
 
 	protected
 		$auth = [
@@ -96,6 +100,69 @@ abstract class Request
 		if (!self::URIHasAllowedScheme($uri)) {
 			\trigger_error('URI fetching not allowed for '.$uri, E_USER_WARNING);
 			return false;
+		}
+		if ($this->block_private_ips && !self::URIHasPublicHost($uri)) {
+			\trigger_error('URI host is not a public IP for '.$uri, E_USER_WARNING);
+			return false;
+		}
+		return true;
+	}
+
+	/**
+	 * Whether the URI host resolves exclusively to public IPs.
+	 * Blocks literal private/reserved/loopback/link-local IPs (including
+	 * decimal-dottedless forms like http://2130706433/ and bracketed IPv6
+	 * like http://[::1]/) as well as hostnames that resolve to one. Fails
+	 * closed when the host cannot be resolved. Note: this is a pre-request
+	 * check; a hostile DNS that rebinds between check and connect (TOCTOU)
+	 * is not covered.
+	 */
+	public static function URIHasPublicHost(string $uri) : bool
+	{
+		$host = \parse_url($uri, PHP_URL_HOST);
+		if (!\is_string($host) || '' === $host) {
+			return false;
+		}
+		// Bracketed IPv6 literals (http://[::1]/): parse_url keeps the
+		// brackets, which filter_var rejects, so strip them first.
+		if (\str_starts_with($host, '[') && \str_ends_with($host, ']')) {
+			$host = \substr($host, 1, -1);
+		}
+		// Decimal-dottedless IPv4 literals (http://2130706433/ == 127.0.0.1).
+		// Note: ip2long() does NOT parse this form (it returns false), so
+		// convert the 32-bit value directly.
+		if (\preg_match('/^[0-9]+$/', $host)) {
+			$long = (int) $host;
+			if ($long >= 0 && $long <= 4294967295) {
+				$host = \long2ip($long);
+			}
+		}
+		$flags = FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE;
+		if (\filter_var($host, FILTER_VALIDATE_IP, $flags)) {
+			return true;
+		}
+		if (\filter_var($host, FILTER_VALIDATE_IP)) {
+			return false; // literal non-public IP
+		}
+		$ips = array();
+		foreach (\dns_get_record($host, DNS_A + DNS_AAAA) ?: array() as $record) {
+			if (!empty($record['ip'])) {
+				$ips[] = $record['ip'];
+			}
+			if (!empty($record['ipv6'])) {
+				$ips[] = $record['ipv6'];
+			}
+		}
+		if (!$ips) {
+			$ips = \gethostbynamel($host) ?: array();
+		}
+		if (!$ips) {
+			return false; // fail closed on unresolvable hosts
+		}
+		foreach ($ips as $ip) {
+			if (!\filter_var($ip, FILTER_VALIDATE_IP, $flags)) {
+				return false;
+			}
 		}
 		return true;
 	}
