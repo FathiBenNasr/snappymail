@@ -426,7 +426,7 @@ trait CalDAV
 		}
 
 		$oClient = new DAVClient($aSettings);
-		$oClient->setVerifyPeer(false);
+		$oClient->setVerifyPeer(true);
 		$oClient->urlPath = $aUrl['path'];
 
 		$this->logWrite('DavClient: User: '.$aSettings['userName'].', Url: '.$sUrl, \LOG_INFO, 'DAV');
