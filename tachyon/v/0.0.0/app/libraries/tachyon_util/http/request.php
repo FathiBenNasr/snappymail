@@ -111,8 +111,10 @@ abstract class Request
 	/**
 	 * Whether the URI host resolves exclusively to public IPs.
 	 * Blocks literal private/reserved/loopback/link-local IPs (including
-	 * decimal-dottedless forms like http://2130706433/ and bracketed IPv6
-	 * like http://[::1]/) as well as hostnames that resolve to one. Fails
+	 * non-standard numeric forms like http://2130706433/, http://017700000001/,
+	 * http://0x7f000001/, http://127.1/ and bracketed IPv6 like
+	 * http://[::1]/) as well as
+	 * hostnames that resolve to one. Fails
 	 * closed when the host cannot be resolved. Note: this is a pre-request
 	 * check; a hostile DNS that rebinds between check and connect (TOCTOU)
 	 * is not covered.
@@ -128,14 +130,15 @@ abstract class Request
 		if (\str_starts_with($host, '[') && \str_ends_with($host, ']')) {
 			$host = \substr($host, 1, -1);
 		}
-		// Decimal-dottedless IPv4 literals (http://2130706433/ == 127.0.0.1).
-		// Note: ip2long() does NOT parse this form (it returns false), so
-		// convert the 32-bit value directly.
-		if (\preg_match('/^[0-9]+$/', $host)) {
-			$long = (int) $host;
-			if ($long >= 0 && $long <= 4294967295) {
-				$host = \long2ip($long);
-			}
+		// Numeric IPv4 literals in non-standard forms (http://2130706433/,
+		// http://017700000001/, http://0x7f000001/, http://127.1/,
+		// http://1.2.3.04/): the HTTP client parses these as IPs directly
+		// (verified: curl connects to 127.0.0.1 for the hex forms with no
+		// DNS involved) while dns_get_record() below would query them as
+		// hostnames, so normalize to dotted decimal before validation.
+		$sNormalized = self::NormalizeNumericIPv4($host);
+		if (null !== $sNormalized) {
+			$host = $sNormalized;
 		}
 		$flags = FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE;
 		if (\filter_var($host, FILTER_VALIDATE_IP, $flags)) {
@@ -165,6 +168,70 @@ abstract class Request
 			}
 		}
 		return true;
+	}
+
+	/**
+	 * Normalize a numeric IPv4 literal in non-standard form to dotted
+	 * decimal, following inet_aton semantics: 1-4 dot-separated parts,
+	 * each decimal, octal (leading zero) or hex (0x prefix); the last
+	 * part takes all remaining bits (32/24/16/8). Returns null when the
+	 * host is not such a literal. A part like "08" is not parsed as
+	 * numeric by the resolver, so it is left for the hostname path below.
+	 */
+	private static function NormalizeNumericIPv4(string $host) : ?string
+	{
+		$aParts = \explode('.', $host);
+		$iCount = \count($aParts);
+		if ($iCount < 1 || $iCount > 4) {
+			return null;
+		}
+		$aNums = array();
+		foreach ($aParts as $sPart) {
+			if ('' === $sPart
+				|| !\preg_match('/^(0[xX][0-9a-fA-F]+|[0-9]+)$/', $sPart)) {
+				return null;
+			}
+			if (\preg_match('/^0[xX]/', $sPart)) {
+				if (10 < \strlen($sPart)) {
+					return null; // longer than 0x + 8 digits: not a 32-bit value
+				}
+				$aNums[] = \hexdec($sPart);
+				continue;
+			}
+			if (1 < \strlen($sPart) && '0' === $sPart[0]
+				&& !\preg_match('/^0[0-7]+$/', $sPart)) {
+				return null;
+			}
+			if (12 < \strlen($sPart)) {
+				return null; // longer than 037777777777: not a 32-bit value
+			}
+			$aNums[] = 1 < \strlen($sPart) && '0' === $sPart[0]
+				? \octdec($sPart) : (int) $sPart;
+		}
+		$iMax = array(4294967295, 16777215, 65535, 255);
+		for ($i = 0; $i < $iCount - 1; $i++) {
+			if ($aNums[$i] > 255) {
+				return null;
+			}
+		}
+		if ($aNums[$iCount - 1] > $iMax[$iCount - 1]) {
+			return null;
+		}
+		switch ($iCount) {
+			case 1:
+				$long = $aNums[0];
+				break;
+			case 2:
+				$long = ($aNums[0] << 24) | $aNums[1];
+				break;
+			case 3:
+				$long = ($aNums[0] << 24) | ($aNums[1] << 16) | $aNums[2];
+				break;
+			default:
+				$long = ($aNums[0] << 24) | ($aNums[1] << 16) | ($aNums[2] << 8) | $aNums[3];
+				break;
+		}
+		return \long2ip($long);
 	}
 
 	/**
