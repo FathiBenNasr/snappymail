@@ -674,7 +674,13 @@ export class MessageModel extends AbstractModel {
 		});
 	}
 
-	async smimeDecrypt() {
+	/**
+	 * @param {boolean=} auto true only from the automatic attempt when a message
+	 * is opened. Compared against the literal because this is also a knockout
+	 * click handler, and knockout hands those the view model as the first
+	 * argument, which would otherwise make every manual click look automatic.
+	 */
+	async smimeDecrypt(auto) {
 		const message = this;
 		const addresses = message.from.concat(message.to, message.cc, message.bcc).map(item => item.email),
 			identity = IdentityUserStore.find(item => addresses.includes(item.email)),
@@ -688,6 +694,13 @@ export class MessageModel extends AbstractModel {
 			params.certificate = identity.smimeCertificate();
 			params.privateKey = identity.smimeKey();
 			if (identity.smimeKeyEncrypted()) {
+				// Automatic means silent. Passphrases.ask() would raise a dialog
+				// when the passphrase is in neither the session nor local storage,
+				// and a dialog on every encrypted message opened is worse than the
+				// button it replaces. Leave it encrypted and let the user click.
+				if (true === auto && !Passphrases.has(identity) && !Passphrases.hasInLocalStorage(identity)) {
+					return;
+				}
 				pass = await Passphrases.ask(identity,
 					i18n('SMIME/PRIVATE_KEY_OF', {EMAIL: identity.email}),
 					'CRYPTO/DECRYPT'

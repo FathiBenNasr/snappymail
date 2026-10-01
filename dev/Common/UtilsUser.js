@@ -387,6 +387,16 @@ viewMessage = (oMessage, popup) => {
 				SettingsUserStore.messageReadDelay() * 1000 // seconds
 			);
 		}
+
+		// Decrypt without being asked, where the administrator has turned that on.
+		// After the loading flag is cleared rather than around this, deliberately:
+		// the crypto-control already reports encrypted and decrypted state, and a
+		// spinner held across decryption is a spinner left spinning when a key is
+		// missing or a passphrase is refused. The call declines to prompt, so an
+		// encrypted message simply stays encrypted with its button.
+		if (SettingsUserStore.autoDecryptMessages?.() && oMessage.smimeEncrypted() && !oMessage.smimeDecrypted()) {
+			oMessage.smimeDecrypt(true);
+		}
 	}
 },
 

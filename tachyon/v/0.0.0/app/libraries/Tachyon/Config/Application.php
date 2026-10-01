@@ -261,6 +261,9 @@ Warning: only enable when server does not do this, else double compression error
 				'gnupg'                   => array(true),
 				'openpgp'                 => array(true),
 				'auto_verify_signatures'  => array(false),
+				'auto_decrypt_messages'   => array(false, 'Decrypt an S/MIME message when it is opened,
+but only when that needs no passphrase: one the key does not have, or one already remembered.
+Otherwise the Decrypt button stays the way in, rather than a dialog on every message.'),
 
 				'allow_admin_panel'       => array(true, 'Access settings'),
 				'admin_login'             => array('admin', 'Login and password for web admin panel'),

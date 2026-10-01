@@ -817,6 +817,7 @@ class Actions
 		if ($aResult['Auth']) {
 			$aResult['proxyExternalImages'] = (bool)$oConfig->Get('labs', 'use_local_proxy_for_external_images', false);
 			$aResult['autoVerifySignatures'] = (bool)$oConfig->Get('security', 'auto_verify_signatures', false);
+			$aResult['autoDecryptMessages'] = (bool)$oConfig->Get('security', 'auto_decrypt_messages', false);
 			$aResult['allowLanguagesOnSettings'] = (bool) $oConfig->Get('webmail', 'allow_languages_on_settings', true);
 			$aResult['minRefreshInterval'] = (int) $oConfig->Get('webmail', 'min_refresh_interval', 5);
 			$aResult['Capa'] = $this->Capa($bAdmin, $oAccount);
