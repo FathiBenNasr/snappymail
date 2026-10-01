@@ -115,9 +115,7 @@ class ServiceActions
 					// query parameter. The first-party UI always sends the header,
 					// so this only affects headerless callers.
 					if (empty($_GET['XToken']) || $_GET['XToken'] !== $token) {
-						$oAccount = $this->oActions->getAccountFromToken(false);
-						$sEmail = $oAccount ? $oAccount->Email() : 'guest';
-						$this->oActions->logWrite("missing XToken for {$sEmail}", \LOG_ERR, 'Token');
+						$this->oActions->logWrite('missing XToken', \LOG_ERR, 'Token');
 						throw new Exceptions\ClientException(Notifications::InvalidToken, null, 'XToken mismatch');
 					}
 				}
