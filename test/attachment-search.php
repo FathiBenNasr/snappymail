@@ -1,6 +1,6 @@
 <?php
 
-// Run with: php build/test_attachment_search.php
+// Run with: php test/attachment-search.php
 spl_autoload_register(static function (string $class): void {
 	$file = dirname(__DIR__).'/tachyon/v/0.0.0/app/libraries/'.str_replace('\\', '/', $class).'.php';
 	if (is_file($file)) {
@@ -184,23 +184,16 @@ check($pluginSearch->invoke($plugin, $imap, 'attachment', 'INBOX') === [2], 'Aut
 $imap->bodies = [1 => null];
 $params->oCacher = null;
 $params->oAttachmentCacher = null;
-try {
-	$getUids->invoke($client, $params, $info);
-	throw new RuntimeException('Missing metadata must not silently count as no attachment');
-} catch (\MailSo\RuntimeException $expected) {
-	check(str_contains($expected->getMessage(), 'BODYSTRUCTURE'), 'Missing metadata reports the failed search');
-}
+$aUids = $getUids->invoke($client, $params, $info);
+check(!\in_array(1, $aUids, true), 'A message the server will not describe is left out of the results');
 
-// An interrupted scan keeps completed batches, but never caches missing metadata as false.
+// A scan that skips a message still keeps its completed batches, and the skipped
+// one is never cached as false, so a later search asks about it again.
 $cache = new AttachmentSearchCache;
 $selected = $imap->FolderExamine('Recovery');
 $imap->bodies = array_fill(1, 200, $file) + [201 => null];
-try {
-	$imap->FilterAttachmentMessages(range(1, 201), true, $cache, $selected);
-	throw new RuntimeException('Expected incomplete scan to fail');
-} catch (\MailSo\RuntimeException $expected) {
-	check(str_contains($expected->getMessage(), 'BODYSTRUCTURE'), 'Incomplete scan reports failure');
-}
+check(count($imap->FilterAttachmentMessages(range(1, 201), true, $cache, $selected)) === 200,
+	'One undescribed message costs only itself, the rest of the scan still returns');
 $imap->bodies[201] = $text;
 $imap->fetches = [];
 check(count($imap->FilterAttachmentMessages(range(1, 201), true, $cache, $selected)) === 200, 'Retry returns correct matches');

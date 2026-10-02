@@ -558,7 +558,13 @@ trait Messages
 			) as $oFetchResponse) {
 				$oBody = $oFetchResponse->GetFetchBodyStructure();
 				if (!$oBody) {
-					throw new \MailSo\RuntimeException('Missing BODYSTRUCTURE for attachment search');
+					// One message the server will not describe must not take the
+					// whole search down with it, so leave it out of the result and
+					// carry on. Not cached either: absence here is the server being
+					// unhelpful rather than a fact about the message, and caching
+					// false would make a transient answer permanent.
+					$this->logWrite('No BODYSTRUCTURE for attachment search, message skipped', \LOG_NOTICE);
+					continue;
 				}
 				$iId = $bUid ? $oFetchResponse->GetFetchValue(FetchType::UID)
 					: $oFetchResponse->oImapResponse->ResponseList[1];
