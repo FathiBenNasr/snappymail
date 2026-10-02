@@ -426,7 +426,12 @@ trait CalDAV
 		}
 
 		$oClient = new DAVClient($aSettings);
-		$oClient->setVerifyPeer(true);
+		$oSslConfig = \Tachyon\API::Config();
+		$oClient->setVerifyPeer(!!$oSslConfig->Get('ssl', 'verify_certificate', true));
+		$sSslCaFile = \trim((string) $oSslConfig->Get('ssl', 'cafile', ''));
+		if ('' !== $sSslCaFile) {
+			$oClient->setCABundleFile($sSslCaFile);
+		}
 		$oClient->urlPath = $aUrl['path'];
 
 		$this->logWrite('DavClient: User: '.$aSettings['userName'].', Url: '.$sUrl, \LOG_INFO, 'DAV');
