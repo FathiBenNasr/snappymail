@@ -155,7 +155,6 @@ export const SettingsUserStore = new class {
 			'userBackgroundName',
 			'userBackgroundHash',
 			'autoVerifySignatures',
-			'autoDecryptMessages',
 			'allowLanguagesOnSettings',
 			'attachmentLimit',
 			'Theme',

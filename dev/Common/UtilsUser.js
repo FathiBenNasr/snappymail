@@ -378,7 +378,6 @@ viewMessage = (oMessage, popup) => {
 
 		MessageUserStore.bodiesDom().append(body);
 
-		MessageUserStore.loading(false);
 		oMessage.body.hidden = false;
 
 		if (oMessage.isUnseen() && SettingsUserStore.messageReadAuto()) {
@@ -389,14 +388,19 @@ viewMessage = (oMessage, popup) => {
 		}
 
 		// Decrypt without being asked, where the administrator has turned that on.
-		// After the loading flag is cleared rather than around this, deliberately:
-		// the crypto-control already reports encrypted and decrypted state, and a
-		// spinner held across decryption is a spinner left spinning when a key is
-		// missing or a passphrase is refused. The call declines to prompt, so an
-		// encrypted message simply stays encrypted with its button.
-		if (SettingsUserStore.autoDecryptMessages?.() && oMessage.smimeEncrypted() && !oMessage.smimeDecrypted()) {
-			oMessage.smimeDecrypt(true);
+		// Admin config rather than a user setting, so it is read from AppData
+		// directly: SettingsUserStore carries what the user can change.
+		//
+		// The spinner is held until the attempt settles, or a large message shows
+		// an empty body for as long as decryption takes. smimeDecrypt is async, so
+		// its promise settles on every path, including the one that declines to
+		// prompt and the one that fails, which is what stops a spinner being left
+		// running when a key is missing or a passphrase is refused.
+		if (SettingsGet('autoDecryptMessages') && oMessage.smimeEncrypted() && !oMessage.smimeDecrypted()) {
+			// Handed back so the remote path below leaves the spinner alone.
+			return oMessage.smimeDecrypt(true).finally(() => MessageUserStore.loading(false));
 		}
+		MessageUserStore.loading(false);
 	}
 },
 
@@ -408,6 +412,9 @@ populateMessageBody = (oMessage, popup) => {
 		} else {
 			popup || MessageUserStore.loading(true);
 			Remote.message((iError, oData/*, bCached*/) => {
+				// Set when viewMessage has started an automatic decryption and is
+				// holding the spinner until it settles.
+				let decrypting;
 				if (iError) {
 					if (Notifications.RequestAborted !== iError && !popup) {
 						MessageUserStore.message(null);
@@ -431,10 +438,10 @@ populateMessageBody = (oMessage, popup) => {
 						}
 						oMessage.body.remove();
 */
-						viewMessage(oMessage, popup);
+						decrypting = viewMessage(oMessage, popup);
 					}
 				}
-				popup || MessageUserStore.loading(false);
+				popup || decrypting || MessageUserStore.loading(false);
 			}, oMessage.folder, oMessage.uid);
 		}
 	}
