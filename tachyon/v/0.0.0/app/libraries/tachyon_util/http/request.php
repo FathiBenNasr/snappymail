@@ -159,7 +159,7 @@ abstract class Request
 			return false; // literal non-public IP
 		}
 		$ips = array();
-		foreach (\dns_get_record($host, DNS_A + DNS_AAAA) ?: array() as $record) {
+		foreach (\dns_get_record($host, DNS_A | DNS_AAAA) ?: array() as $record) {
 			if (!empty($record['ip'])) {
 				$ips[] = $record['ip'];
 			}
