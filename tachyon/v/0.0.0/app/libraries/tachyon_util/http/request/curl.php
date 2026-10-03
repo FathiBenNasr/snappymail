@@ -35,7 +35,7 @@ class CURL extends \Tachyon\Util\HTTP\Request
 			CURLOPT_HEADERFUNCTION => array($this, 'fetchHeader'),
 			CURLOPT_WRITEFUNCTION  => array($this, \is_resource($this->stream) ? 'streamData' : 'fetchData'),
 			CURLOPT_SSL_VERIFYPEER => ($this->verify_peer || $this->ca_bundle),
-//		CURLOPT_SSL_VERIFYHOST => $this->verify_peer ? 2 : 0,
+//			CURLOPT_SSL_VERIFYHOST => $this->verify_peer ? 2 : 0,
 //			CURLOPT_FOLLOWLOCATION => false,       // follow redirects
 //			CURLOPT_MAXREDIRS      => 0,           // stop after 0 redirects
 		));
