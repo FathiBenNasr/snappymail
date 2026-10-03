@@ -1,0 +1,45 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>Tachyon</Name>
+  <Repository>ghcr.io/kimusan/tachyon</Repository>
+  <Registry>https://github.com/kimusan/Tachyon/pkgs/container/tachyon</Registry>
+  <Branch>
+    <Tag>latest</Tag>
+    <TagDescription>Current stable release</TagDescription>
+  </Branch>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/kimusan/Tachyon/issues</Support>
+  <Project>https://tachyonmail.app/</Project>
+  <Overview>
+Tachyon is self-hosted webmail: mail, contacts and calendars in one PHP application, with no database to install. Point it at your own IMAP server and it sends nothing to anyone else. No tracking, no third party fonts or scripts, no external avatar service.[br][br]
+It speaks IMAP, SMTP, Sieve, CardDAV and CalDAV. The interface loads in about 120 KB over the wire.[br][br]
+&#8226; Mail, with threading, undo send, server-side remote image rules and subtree search[br]
+&#8226; Calendar over CalDAV, with month, week, day and list views[br]
+&#8226; Contacts over CardDAV, with groups, photos and bulk operations[br]
+&#8226; 16 themes, each with a light and a dark scheme[br]
+&#8226; OpenPGP and S/MIME[br][br]
+&#9888; First login: the admin password is generated on first start and written inside the data share, at appdata/tachyon/_data_/_default_/admin_password.txt. Open it from the Unraid console or the file manager, then sign in at http://TOWER-IP:8888/?admin and change it.[br][br]
+&#9888; Secure cookies are OFF in this template so that plain HTTP on your LAN works. If you put Tachyon behind a reverse proxy with HTTPS, set SECURE_COOKIES to true.[br][br]
+Upgrades keep your data: everything lives in the mapped appdata folder. Existing SnappyMail installations also migrate in place.
+  </Overview>
+  <Category>Network:Mail Productivity:</Category>
+  <WebUI>http://[IP]:[PORT:8888]/</WebUI>
+  <TemplateURL>https://raw.githubusercontent.com/kimusan/Tachyon/master/unraid/tachyon.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/kimusan/Tachyon/master/unraid/tachyon-icon.png</Icon>
+  <ExtraParams/>
+  <PostArgs/>
+  <CPUset/>
+  <DateInstalled/>
+  <DonateText/>
+  <DonateLink/>
+  <Requires/>
+  <Config Name="WebUI" Target="8888" Default="8888" Mode="tcp" Description="Port the web interface listens on. Only this port needs publishing; the container also runs php-fpm on 9000, which must stay internal." Type="Port" Display="always" Required="true" Mask="false">8888</Config>
+  <Config Name="Data" Target="/var/lib/tachyon" Default="/mnt/user/appdata/tachyon" Mode="rw" Description="Configuration, accounts, contacts, calendars and logs. Back this up." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/tachyon</Config>
+  <Config Name="Secure cookies" Target="SECURE_COOKIES" Default="false" Mode="" Description="Set to true only when Tachyon is reached over HTTPS. A secure cookie is never sent over plain HTTP, so leaving this on while browsing to http://TOWER-IP:8888 makes login fail with no error." Type="Variable" Display="always" Required="true" Mask="false">false</Config>
+  <Config Name="Max attachment size" Target="UPLOAD_MAX_SIZE" Default="25M" Mode="" Description="Largest attachment that can be uploaded, for example 25M or 100M." Type="Variable" Display="always" Required="false" Mask="false">25M</Config>
+  <Config Name="PHP memory limit" Target="MEMORY_LIMIT" Default="128M" Mode="" Description="Raise this if large mailboxes or big attachments cause errors." Type="Variable" Display="advanced" Required="false" Mask="false">128M</Config>
+  <Config Name="Debug" Target="DEBUG" Default="false" Mode="" Description="Set to true for verbose entrypoint output in the container log." Type="Variable" Display="advanced" Required="false" Mask="false">false</Config>
+</Container>
