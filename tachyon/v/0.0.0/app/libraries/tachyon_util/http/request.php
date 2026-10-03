@@ -133,7 +133,7 @@ abstract class Request
 			$host = \substr($host, 1, -1);
 		}
 		// IPv6 literals with an embedded IPv4 address (::ffff:127.0.0.1,
-		// ::ffff:a00:5, ::, 64:ff9b::7f00:1): FILTER_FLAG_NO_RES_RANGE
+		// ::ffff:a00:5, 64:ff9b::7f00:1): FILTER_FLAG_NO_RES_RANGE
 		// does not treat these ranges as reserved, but they reach IPv4
 		// addresses in practice, so unwrap the low 32 bits and validate
 		// those as IPv4.
@@ -252,22 +252,19 @@ abstract class Request
 	/**
 	 * Unwrap an IPv6 literal with an embedded IPv4 address to dotted
 	 * decimal, or null when the host is not such a literal. Covers the
-	 * IPv4-mapped range ::ffff:0:0/96 (dotted or hex tail), the
-	 * unspecified address :: (-> 0.0.0.0), the NAT64 well-known prefix
-	 * 64:ff9b::/96, and the deprecated IPv4-compatible form ::a.b.c.d
-	 * (textual dotted-quad tail only, so ::1 stays loopback and is
-	 * never mistaken for ::0.0.0.1). Needed because
-	 * FILTER_FLAG_NO_RES_RANGE does not treat these ranges as reserved
-	 * even though they reach IPv4 addresses in practice.
+	 * IPv4-mapped range ::ffff:0:0/96 (dotted or hex tail), the NAT64
+	 * well-known prefix 64:ff9b::/96, and the deprecated
+	 * IPv4-compatible form ::a.b.c.d (textual dotted-quad tail only,
+	 * so ::1 stays loopback and is never mistaken for ::0.0.0.1).
+	 * Needed because FILTER_FLAG_NO_RES_RANGE does not treat these
+	 * ranges as reserved even though they reach IPv4 addresses in
+	 * practice.
 	 */
 	private static function UnwrapEmbeddedIPv4(string $host) : ?string
 	{
 		$sBin = \inet_pton($host);
 		if (false === $sBin || 16 !== \strlen($sBin)) {
 			return null; // not an IPv6 literal
-		}
-		if ($sBin === \str_repeat("\x00", 16)) {
-			return '0.0.0.0'; // unspecified address
 		}
 		$sPrefix = \substr($sBin, 0, 12);
 		if ("\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\xff" === $sPrefix // ::ffff:0:0/96
