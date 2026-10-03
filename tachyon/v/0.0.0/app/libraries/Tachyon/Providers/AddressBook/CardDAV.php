@@ -325,6 +325,10 @@ trait CardDAV
 		}
 
 		$oClient = new DAVClient($aSettings);
+		// Honor the [ssl] section as MailSo\Net\SSLContext does for mail.
+		// Note: an explicit cafile enables peer verification in the curl
+		// transport even with verify_certificate Off; allow_self_signed
+		// has no curl equivalent -- point cafile at a self-signed server.
 		$oSslConfig = \Tachyon\API::Config();
 		$oClient->setVerifyPeer(!!$oSslConfig->Get('ssl', 'verify_certificate', true));
 		$sSslCaFile = \trim((string) $oSslConfig->Get('ssl', 'cafile', ''));
