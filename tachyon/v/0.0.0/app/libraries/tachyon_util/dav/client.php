@@ -79,6 +79,30 @@ class Client
 	}
 
 	/**
+	 * Apply the [ssl] section, so DAV verifies certificates the same way IMAP,
+	 * SMTP and Sieve already do through MailSo\Net\SSLContext. Without this a
+	 * private CA or a deliberately relaxed install behaves differently for
+	 * calendars and address books than for mail on the same server.
+	 *
+	 * Setting a bundle turns peer verification on whatever verify_certificate
+	 * says, since both transports compute it as verify_peer || ca_bundle.
+	 * allow_self_signed has no curl equivalent, so point cafile at the
+	 * certificate itself for a self-signed server.
+	 */
+	public function applySslConfig() : void
+	{
+		$oConfig = \Tachyon\API::Config();
+		$this->setVerifyPeer(!!$oConfig->Get('ssl', 'verify_certificate', true));
+		// cafile first, then capath. ca_bundle carries either and each transport
+		// works out which one it was handed.
+		$sBundle = \trim((string) $oConfig->Get('ssl', 'cafile', ''))
+			?: \trim((string) $oConfig->Get('ssl', 'capath', ''));
+		if ('' !== $sBundle) {
+			$this->setCABundleFile($sBundle);
+		}
+	}
+
+	/**
 	 * Performs an actual HTTP request, and returns the result.
 	 *
 	 * If the specified url is relative, it will be expanded based on the base url.
