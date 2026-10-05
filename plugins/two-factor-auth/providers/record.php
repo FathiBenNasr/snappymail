@@ -183,6 +183,31 @@ final class TwoFactorRecord
 	}
 
 	/**
+	 * The QR code as an SVG data URI — black squares on white, a quiet zone of
+	 * four modules. 2.20.0 drew it as text in a `<pre>`: with the issuer and
+	 * the image URL the code grows, and FreeOTP+ would not read the characters
+	 * (5 October 2026). An image is what Pharos shows, and what scanners read.
+	 *
+	 * @param callable $fDark fn(int $row, int $col): bool
+	 */
+	public static function svg(int $iModules, callable $fDark) : string
+	{
+		$iQuiet = 4;
+		$iSize = $iModules + 2 * $iQuiet;
+		$sPath = '';
+		for ($r = 0; $r < $iModules; ++$r) {
+			for ($c = 0; $c < $iModules; ++$c) {
+				if ($fDark($r, $c)) {
+					$sPath .= 'M' . ($c + $iQuiet) . ' ' . ($r + $iQuiet) . 'h1v1h-1z';
+				}
+			}
+		}
+		$sSvg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' . $iSize . ' ' . $iSize . '" shape-rendering="crispEdges">'
+			. '<rect width="100%" height="100%" fill="#fff"/><path fill="#000" d="' . $sPath . '"/></svg>';
+		return 'data:image/svg+xml;base64,' . \base64_encode($sSvg);
+	}
+
+	/**
 	 * The otpauth URI. The issuer goes in the label AND as a parameter: it is
 	 * what names the service in the authenticator — without it the account
 	 * shows up as a bare address, which stops being readable at the second one.
@@ -197,6 +222,9 @@ final class TwoFactorRecord
 		if ('' !== $sIssuer) {
 			$sUri .= '&issuer=' . \rawurlencode($sIssuer);
 		}
+		// Stated rather than left to defaults, as Pharos does: FreeOTP+ and a
+		// few others read them, and they are what this server computes.
+		$sUri .= '&algorithm=SHA1&digits=6&period=30';
 		if ('' !== $sImage) {
 			$sUri .= '&image=' . \rawurlencode($sImage);
 		}

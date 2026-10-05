@@ -100,8 +100,30 @@ check('and it stays on', $aNew['Enable'], true);
 
 /* ---- the URI ---- */
 check('the issuer names the service', TwoFactorRecord::uri('a@x.tn', 'ABC', 'smail.tn'),
-	'otpauth://totp/smail.tn:a%40x.tn?secret=ABC&issuer=smail.tn');
-check('without an issuer, the URI of 2.20.0', TwoFactorRecord::uri('a@x.tn', 'ABC'), 'otpauth://totp/a%40x.tn?secret=ABC');
+	'otpauth://totp/smail.tn:a%40x.tn?secret=ABC&issuer=smail.tn&algorithm=SHA1&digits=6&period=30');
+check('the image comes last, encoded', TwoFactorRecord::uri('a@x.tn', 'ABC', 'smail.tn', 'https://cdn.x/i.png'),
+	'otpauth://totp/smail.tn:a%40x.tn?secret=ABC&issuer=smail.tn&algorithm=SHA1&digits=6&period=30&image=https%3A%2F%2Fcdn.x%2Fi.png');
+
+/* ---- the QR code is an image a scanner reads back ---- */
+require_once __DIR__ . '/../../../snappymail/v/0.0.0/app/libraries/snappymail/qrcode.php';
+$sUri = TwoFactorRecord::uri('fathi.bennasr@smail.tn', 'JBSWY3DPEHPK3PXPJBSWY3DP', 'smail.tn',
+	'https://cdn.convergent.tn/assets/images/smail-otp-icon.png');
+$oQr = \SnappyMail\QRCode::getMinimumQRCode($sUri, \SnappyMail\QRCode::ERROR_CORRECT_LEVEL_M);
+$sData = TwoFactorRecord::svg($oQr->getModuleCount(), fn (int $r, int $c) => $oQr->isDark($r, $c));
+check('an SVG data URI', \str_starts_with($sData, 'data:image/svg+xml;base64,'), true);
+$sZbar = \trim((string) \shell_exec('command -v zbarimg'));
+$sPy = '/var/www/pdfenv/bin/python3';
+if ('' !== $sZbar && \is_executable($sPy)) {
+	$sDir = \sys_get_temp_dir() . '/qr-' . \bin2hex(\random_bytes(4));
+	\mkdir($sDir);
+	\file_put_contents("$sDir/qr.svg", \base64_decode(\substr($sData, \strlen('data:image/svg+xml;base64,'))));
+	\shell_exec(\escapeshellarg($sPy) . ' -c ' . \escapeshellarg("import cairosvg; cairosvg.svg2png(url='$sDir/qr.svg', write_to='$sDir/qr.png', output_width=480)"));
+	$sRead = \trim((string) \shell_exec('zbarimg --raw -q ' . \escapeshellarg("$sDir/qr.png")));
+	check('zbarimg reads back exactly the URI', $sRead, $sUri);
+	@\unlink("$sDir/qr.svg"); @\unlink("$sDir/qr.png"); @\rmdir($sDir);
+} else {
+	echo "  skip  zbarimg or cairosvg absent: the scan is not proven here\n";
+}
 
 echo "\n", $iFail ? "$iFail failed\n" : "0 failed\n";
 exit($iFail ? 1 : 0);

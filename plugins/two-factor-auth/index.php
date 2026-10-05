@@ -10,7 +10,7 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 {
 	const
 		NAME     = 'Two Factor Authentication',
-		VERSION  = '2.21.0',
+		VERSION  = '2.22.0',
 		RELEASE  = '2026-10-05',
 		REQUIRED = '2.36.0',
 		CATEGORY = 'Login',
@@ -140,7 +140,7 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 			$uri,
 			\SnappyMail\QRCode::ERROR_CORRECT_LEVEL_M
 		);
-		return $QR->__toString();
+		return TwoFactorRecord::svg($QR->getModuleCount(), fn (int $r, int $c) => $QR->isDark($r, $c));
 	}
 
 	/**

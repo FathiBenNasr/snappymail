@@ -30,11 +30,11 @@ namespace RainLoop\Plugins {
 		public function logWrite($m, $l = 0) {}
 	}
 }
-namespace SnappyMail { class QRCode { const ERROR_CORRECT_LEVEL_M = 0; public static function getMinimumQRCode($u, $l) { return new class ($u) { public function __construct(public string $u) {} public function __toString() : string { return 'QR(' . $this->u . ')'; } }; } } }
 
 namespace {
 	define('APP_SALT', 'salt-of-this-install');
 	require __DIR__ . '/../../../snappymail/v/0.0.0/app/libraries/snappymail/totp.php';
+	require __DIR__ . '/../../../snappymail/v/0.0.0/app/libraries/snappymail/qrcode.php';
 	require __DIR__ . '/../index.php';
 
 	final class Storage
@@ -78,7 +78,7 @@ namespace {
 	$c = $p->DoCreateTwoFactorSecret()['Result'];
 	$sSecret = $c['Secret'];
 	$check('creation shows the secret, the QR with the service name, and 8 codes once',
-		array(\strlen($sSecret) >= 16, \str_contains($c['QRCode'], 'issuer=smail.tn'), \count(\explode(' ', $c['BackupCodes']))), array(true, true, 8));
+		array(\strlen($sSecret) >= 16, \str_starts_with($c['QRCode'], 'data:image/svg+xml;base64,'), \count(\explode(' ', $c['BackupCodes']))), array(true, true, 8));
 	$check('the stored record holds neither', \str_contains(\reset($p->oStore->data), $sSecret), false);
 	$check('the info screen never sees secret, codes or QR', \array_keys($p->DoGetTwoFactorInfo()['Result']), array('User', 'IsSet', 'Enable', 'Tested'));
 
