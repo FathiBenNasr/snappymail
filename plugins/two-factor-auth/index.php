@@ -10,7 +10,7 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 {
 	const
 		NAME     = 'Two Factor Authentication',
-		VERSION  = '2.22.0',
+		VERSION  = '2.23.0',
 		RELEASE  = '2026-10-05',
 		REQUIRED = '2.36.0',
 		CATEGORY = 'Login',
@@ -226,7 +226,9 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 		}
 
 		$aRecord['Enable'] = $bEnable;
-		return $this->jsonResponse(__FUNCTION__, $this->saveRecord($oAccount, $aRecord));
+		$bSaved = $this->saveRecord($oAccount, $aRecord);
+		$bSaved && $this->appPasswordsRequired($oAccount, $bEnable);
+		return $this->jsonResponse(__FUNCTION__, $bSaved);
 	}
 
 	/** The test of the phone: counted, rate-limited and replay-guarded like a login. */
@@ -259,6 +261,7 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 			'two_factor'
 		);
 		$this->Logger()->Write("TFA: Second factor removed for {$oAccount->Email()}");
+		$this->appPasswordsRequired($oAccount, false);
 
 		return $this->jsonResponse(__FUNCTION__, $this->getTwoFactorInfo($oAccount, true));
 	}
@@ -294,6 +297,24 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 				FILE_APPEND | LOCK_EX);
 		} catch (\Throwable $oError) {
 			// A log that cannot be written must not turn a refusal into an error.
+		}
+	}
+
+	/**
+	 * Mail apps (IMAP, SMTP, DAV) take app passwords only while the second
+	 * factor is on — the SnappyMail-mots-de-passe-appli store, when it is
+	 * installed (its plugin loads the shared code). Without it, nothing
+	 * changes: the second factor then guards the webmail alone, as before.
+	 */
+	protected function appPasswordsRequired(MainAccount $oAccount, bool $bRequired) : void
+	{
+		if (!\class_exists('\\Convergent\\Appli\\Appli')) {
+			return;
+		}
+		$aConf = \Convergent\Appli\Appli::conf((string) $this->Config()->Get('plugin', 'app_passwords_conf', '/etc/sky-appli.conf'));
+		if ($aConf && null !== \Convergent\Appli\Appli::compte($oAccount->Email(), (array) $aConf['domaines'])
+			&& !\Convergent\Appli\Appli::poserExigence($aConf, $oAccount->Email(), $bRequired)) {
+			$this->Logger()->Write('TFA: could not ' . ($bRequired ? 'require' : 'release') . " app passwords for {$oAccount->Email()}");
 		}
 	}
 
@@ -364,8 +385,8 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 	protected function TwoFactorAuthProvider(MainAccount $oAccount) : ?TwoFactorAuthInterface
 	{
 		if (!$this->oTwoFactorAuthProvider) {
-			require __DIR__ . '/providers/interface.php';
-			require __DIR__ . '/providers/totp.php';
+			require_once __DIR__ . '/providers/interface.php';
+			require_once __DIR__ . '/providers/totp.php';
 			$this->oTwoFactorAuthProvider = new TwoFactorAuthTotp();
 		}
 		return $this->oTwoFactorAuthProvider;

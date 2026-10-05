@@ -118,6 +118,23 @@ namespace {
 	try { $p->DoLogin($p->oAccount); $check('locked after five wrong codes, even a good one', false, true); }
 	catch (\RainLoop\Exceptions\ClientException $e) { $check('locked after five wrong codes, even a good one', \end($p->log), 'TFA: locked for rym@smail.tn'); }
 
+	/* ---- app passwords: required while the second factor is on ---- */
+	require_once '/root/Development/SnappyMail/SnappyMail-mots-de-passe-appli/auth/Appli.php';
+	$sRoot = \sys_get_temp_dir() . '/appli-2fa-' . \getmypid();
+	\file_put_contents("$sRoot.conf", '<?php return ' . \var_export(array('racine' => $sRoot, 'domaines' => array('smail.tn')), true) . ';');
+	$q = new P();
+	$q->config = array('app_passwords_conf' => "$sRoot.conf");
+	$c2 = $q->DoCreateTwoFactorSecret()['Result'];
+	$q->params = array('Code' => TwoFactorAuthTotpSlice::code($c2['Secret'], \intdiv(\time(), 30) - 1));
+	$q->DoVerifyTwoFactorCode();
+	$q->params = array('Enable' => '1');
+	$q->DoEnableTwoFactor();
+	$check('switching on requires app passwords for IMAP', \Convergent\Appli\Appli::lire("$sRoot/smail.tn/rym.json")['exige'], true);
+	$q->params = array('Enable' => '0', 'Code' => TwoFactorAuthTotpSlice::code($c2['Secret'], \intdiv(\time(), 30)));
+	$q->DoEnableTwoFactor();
+	$check('switching off releases them', \Convergent\Appli\Appli::lire("$sRoot/smail.tn/rym.json")['exige'], false);
+	@\unlink("$sRoot/smail.tn/rym.json"); @\rmdir("$sRoot/smail.tn"); @\rmdir($sRoot); @\unlink("$sRoot.conf");
+
 	echo "\n", $iFail ? "$iFail failed\n" : "0 failed\n";
 	exit($iFail ? 1 : 0);
 }
