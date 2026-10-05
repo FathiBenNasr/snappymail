@@ -1,5 +1,7 @@
 <?php
 
+require_once __DIR__ . '/providers/record.php';
+
 use \RainLoop\Exceptions\ClientException;
 use \RainLoop\Model\Account;
 use \RainLoop\Model\MainAccount;
@@ -8,8 +10,8 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 {
 	const
 		NAME     = 'Two Factor Authentication',
-		VERSION  = '2.20.0',
-		RELEASE  = '2026-09-11',
+		VERSION  = '2.21.0',
+		RELEASE  = '2026-10-05',
 		REQUIRED = '2.36.0',
 		CATEGORY = 'Login',
 		DESCRIPTION = 'Provides support for TOTP 2FA';
@@ -42,6 +44,11 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 //				->SetLabel('PLUGIN_TWO_FACTOR/LABEL_FORCE')
 				->SetLabel('Enforce 2-Step Verification')
 				->SetType(\RainLoop\Enumerations\PluginPropertyType::BOOL),
+			\RainLoop\Plugins\Property::NewInstance("otp_issuer")
+				->SetLabel('Service name shown in the authenticator')
+				->SetType(\RainLoop\Enumerations\PluginPropertyType::STRING)
+				->SetDescription('Names this service next to the account in the authenticator app. Empty: the webmail title.')
+				->SetDefaultValue(''),
 			\RainLoop\Plugins\Property::NewInstance("otp_image_url")
 				->SetLabel('Authenticator icon URL')
 				->SetType(\RainLoop\Enumerations\PluginPropertyType::STRING)
@@ -58,39 +65,29 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 			$aResult['SetupTwoFactor'] = false;
 			if ($aResult['RequireTwoFactor'] && !empty($aResult['Auth'])) {
 				$aData = $this->getTwoFactorInfo($this->getMainAccountFromToken());
-				$aResult['SetupTwoFactor'] = empty($aData['IsSet']) || empty($aData['Enable']) || empty($aData['Secret']);
+				$aResult['SetupTwoFactor'] = empty($aData['IsSet']) || empty($aData['Enable']);
 			}
 		}
 	}
 
 	public function DoLogin(MainAccount $oAccount)
 	{
-		if ($this->TwoFactorAuthProvider($oAccount)) {
-			$aData = $this->getTwoFactorInfo($oAccount);
-			if (isset($aData['IsSet'], $aData['Enable']) && !empty($aData['Secret']) && $aData['IsSet'] && $aData['Enable']) {
-				$sCode = \trim($this->jsonParam('totp_code', ''));
-				if (empty($sCode)) {
-					$this->Logger()->Write("TFA: Code required for {$oAccount->Email()}");
-					throw new ClientException(\RainLoop\Notifications::AuthError);
-				}
-
-				$bUseBackupCode = false;
-				if (6 < \strlen($sCode) && !empty($aData['BackupCodes'])) {
-					$aBackupCodes = \explode(' ', \trim(\preg_replace('/[^\d]+/', ' ', $aData['BackupCodes'])));
-					$bUseBackupCode = \in_array($sCode, $aBackupCodes);
-					if ($bUseBackupCode) {
-						$this->removeBackupCodeFromTwoFactorInfo($oAccount, $sCode);
-					}
-				}
-
-				if (!$bUseBackupCode && !$this->TwoFactorAuthProvider($oAccount)->VerifyCode($aData['Secret'], $sCode)) {
-					$this->Manager()->Actions()->LoggerAuthHelper($oAccount);
-					$this->Logger()->Write("TFA: Code failed for {$oAccount->Email()}");
-					throw new ClientException(\RainLoop\Notifications::AuthError);
-				}
-				$this->Logger()->Write("TFA: Code verified for {$oAccount->Email()}");
-			}
+		$aRecord = $this->loadRecord($oAccount);
+		if (!$aRecord || empty($aRecord['Enable'])) {
+			return;
 		}
+		$sCode = \trim($this->jsonParam('totp_code', ''));
+		if (empty($sCode)) {
+			$this->Logger()->Write("TFA: Code required for {$oAccount->Email()}");
+			throw new ClientException(\RainLoop\Notifications::AuthError);
+		}
+		$sOutcome = $this->checkCode($oAccount, $aRecord, $sCode);
+		if ('ok' !== $sOutcome) {
+			// The failure goes to the auth log as well, which fail2ban reads.
+			$this->logAuthFailure($oAccount, $sOutcome);
+			throw new ClientException(\RainLoop\Notifications::AuthError);
+		}
+		$this->Logger()->Write("TFA: Code verified for {$oAccount->Email()}");
 	}
 
 	public function DoGetTwoFactorInfo() : array
@@ -111,39 +108,35 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 		if (!$this->TwoFactorAuthProvider($oAccount)) {
 			return $this->jsonResponse(__FUNCTION__, false);
 		}
-
-		$sEmail = $oAccount->Email();
+		// Re-enrolling over an active second factor would remove it without a
+		// code: clearing it (which asks for one) has to come first.
+		$aExisting = $this->loadRecord($oAccount);
+		if ($aExisting && !empty($aExisting['Enable'])) {
+			return $this->jsonResponse(__FUNCTION__, false);
+		}
 
 		$sSecret = $this->TwoFactorAuthProvider($oAccount)->CreateSecret();
+		$aCodes = TwoFactorRecord::newBackupCodes();
+		$this->saveRecord($oAccount, TwoFactorRecord::create($oAccount->Email(), $sSecret, $aCodes, $this->recordKey()));
 
-		$aCodes = \array_map(function(){return \rand(100000000, 900000000);}, \array_fill(0, 8, null));
-
-		$this->StorageProvider()->Put($oAccount,
-			\RainLoop\Providers\Storage\Enumerations\StorageType::CONFIG,
-			'two_factor',
-			\json_encode(array(
-				'User' => $sEmail,
-				'Enable' => false,
-				'Secret' => $sSecret,
-				'QRCode' => $this->getQRCode($oAccount, $sSecret),
-				'BackupCodes' => \implode(' ', $aCodes)
-			))
-		);
-
-		return $this->jsonResponse(__FUNCTION__, $this->getTwoFactorInfo($oAccount));
+		// The only time the backup codes are ever shown: only their hashes are kept.
+		return $this->jsonResponse(__FUNCTION__, array(
+			'User' => $oAccount->Email(),
+			'IsSet' => true,
+			'Enable' => false,
+			'Tested' => false,
+			'Secret' => $sSecret,
+			'QRCode' => $this->getQRCode($oAccount, $sSecret),
+			'BackupCodes' => \implode(' ', $aCodes)
+		));
 	}
 
 	private function getQRCode(MainAccount $oAccount, string $secret) : string
 	{
-		$email = \rawurlencode($oAccount->Email());
-//		$issuer = \rawurlencode(\RainLoop\API::Config()->Get('webmail', 'title', 'SnappyMail'));
-		$uri = "otpauth://totp/{$email}?secret={$secret}";
-		$image = $this->otpImageUrl();
-		if ($image) {
-			$uri .= '&image=' . \rawurlencode($image);
-		}
+		$issuer = \trim((string) $this->Config()->Get('plugin', 'otp_issuer', ''))
+			?: \trim((string) \RainLoop\Api::Config()->Get('webmail', 'title', ''));
+		$uri = TwoFactorRecord::uri($oAccount->Email(), $secret, $issuer, $this->otpImageUrl());
 		$QR = \SnappyMail\QRCode::getMinimumQRCode(
-//			"otpauth://totp/{$issuer}:{$email}?secret={$secret}&issuer={$issuer}",
 			$uri,
 			\SnappyMail\QRCode::ERROR_CORRECT_LEVEL_M
 		);
@@ -183,27 +176,46 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 		return $image;
 	}
 
+	/**
+	 * The secret, again — only while enrolling. Once the second factor is on,
+	 * showing it would hand it to whoever holds the session: a stolen session
+	 * must not become a stolen second factor.
+	 */
 	public function DoShowTwoFactorSecret() : array
 	{
 		$oAccount = $this->getMainAccountFromToken();
-
-		if (!$this->TwoFactorAuthProvider($oAccount)) {
+		$aRecord = $this->loadRecord($oAccount);
+		if (!$this->TwoFactorAuthProvider($oAccount) || !$aRecord || !empty($aRecord['Enable'])) {
 			return $this->jsonResponse(__FUNCTION__, false);
 		}
-
-		$aResult = $this->getTwoFactorInfo($oAccount);
-		unset($aResult['BackupCodes']);
-
-		$aResult['QRCode'] = $this->getQRCode($oAccount, $aResult['Secret']);
-
-		return $this->jsonResponse(__FUNCTION__, $aResult);
+		$sSecret = (string) TwoFactorRecord::unseal((string) $aRecord['SecretBox'], $this->recordKey());
+		return $this->jsonResponse(__FUNCTION__, array(
+			'User' => $oAccount->Email(),
+			'Secret' => $sSecret,
+			'QRCode' => '' === $sSecret ? '' : $this->getQRCode($oAccount, $sSecret)
+		));
 	}
 
+	/**
+	 * On: only once a code from the phone has been accepted (`Tested`) —
+	 * otherwise a mistyped enrolment locks the person out at the next login.
+	 * Off: a current code is required. Without it, a stolen session would
+	 * switch the second factor off and keep the account.
+	 */
 	public function DoEnableTwoFactor() : array
 	{
 		$oAccount = $this->getMainAccountFromToken();
+		$aRecord = $this->loadRecord($oAccount);
+		if (!$this->TwoFactorAuthProvider($oAccount) || !$aRecord) {
+			return $this->jsonResponse(__FUNCTION__, false);
+		}
 
-		if (!$this->TwoFactorAuthProvider($oAccount)) {
+		$bEnable = '1' === \trim($this->jsonParam('Enable', '0'));
+		if ($bEnable && empty($aRecord['Tested'])) {
+			return $this->jsonResponse(__FUNCTION__, false);
+		}
+		if (!$bEnable && !empty($aRecord['Enable'])
+			&& 'ok' !== $this->checkCode($oAccount, $aRecord, (string) $this->jsonParam('Code', ''))) {
 			return $this->jsonResponse(__FUNCTION__, false);
 		}
 
@@ -213,48 +225,32 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 			$oActions->SettingsProvider()->Load($oAccount)->SetConf('EnableTwoFactor', !empty($sValue));
 		}
 
-		$sEmail = $oAccount->Email();
-
-		$bResult = false;
-		$mData = $this->getTwoFactorInfo($oAccount);
-		if (isset($mData['Secret'], $mData['BackupCodes'])) {
-			$bResult = $this->StorageProvider()->Put($oAccount,
-				\RainLoop\Providers\Storage\Enumerations\StorageType::CONFIG,
-				'two_factor',
-				\json_encode(array(
-					'User' => $sEmail,
-					'Enable' => '1' === \trim($this->jsonParam('Enable', '0')),
-					'Secret' => $mData['Secret'],
-					'BackupCodes' => $mData['BackupCodes']
-				))
-			);
-		}
-
-		return $this->jsonResponse(__FUNCTION__, $bResult);
+		$aRecord['Enable'] = $bEnable;
+		return $this->jsonResponse(__FUNCTION__, $this->saveRecord($oAccount, $aRecord));
 	}
 
+	/** The test of the phone: counted, rate-limited and replay-guarded like a login. */
 	public function DoVerifyTwoFactorCode() : array
 	{
 		$oAccount = $this->getMainAccountFromToken();
-
-		if (!$this->TwoFactorAuthProvider($oAccount)) {
+		$aRecord = $this->loadRecord($oAccount);
+		if (!$this->TwoFactorAuthProvider($oAccount) || !$aRecord) {
 			return $this->jsonResponse(__FUNCTION__, false);
 		}
-
-		$sCode = \trim($this->jsonParam('Code', ''));
-
-		$aData = $this->getTwoFactorInfo($oAccount);
-		$sSecret = !empty($aData['Secret']) ? $aData['Secret'] : '';
-
-		return $this->jsonResponse(__FUNCTION__,
-			$this->TwoFactorAuthProvider($oAccount)->VerifyCode($sSecret, $sCode));
+		$bOk = 'ok' === $this->checkCode($oAccount, $aRecord, (string) $this->jsonParam('Code', ''), true);
+		return $this->jsonResponse(__FUNCTION__, $bOk);
 	}
 
+	/** Removing the second factor asks for a current code, once it is on. */
 	public function DoClearTwoFactorInfo() : array
 	{
 		$oAccount = $this->getMainAccountFromToken();
-
+		$aRecord = $this->loadRecord($oAccount);
 		if (!$this->TwoFactorAuthProvider($oAccount)) {
+			return $this->jsonResponse(__FUNCTION__, false);
+		}
+		if ($aRecord && !empty($aRecord['Enable'])
+			&& 'ok' !== $this->checkCode($oAccount, $aRecord, (string) $this->jsonParam('Code', ''))) {
 			return $this->jsonResponse(__FUNCTION__, false);
 		}
 
@@ -262,8 +258,93 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 			\RainLoop\Providers\Storage\Enumerations\StorageType::CONFIG,
 			'two_factor'
 		);
+		$this->Logger()->Write("TFA: Second factor removed for {$oAccount->Email()}");
 
 		return $this->jsonResponse(__FUNCTION__, $this->getTwoFactorInfo($oAccount, true));
+	}
+
+	/**
+	 * One line in the auth log, in the format of the core's own failures.
+	 *
+	 * ⚠️ 2.20.0 called `Actions::LoggerAuthHelper()`, which is **protected**:
+	 * every wrong code at login ended in a PHP error instead of a refusal, and
+	 * nothing ever reached the file fail2ban reads. The line is written here,
+	 * where the core writes its own — `[logs] path` and
+	 * `auth_logging_filename` — and only when `auth_logging` is on.
+	 */
+	protected function logAuthFailure(MainAccount $oAccount, string $sOutcome) : void
+	{
+		try {
+			$oConfig = \RainLoop\Api::Config();
+			if (!$oConfig->Get('logs', 'auth_logging', false)) {
+				return;
+			}
+			$oNow = new \DateTime('now', new \DateTimeZone((string) $oConfig->Get('logs', 'time_zone', 'UTC') ?: 'UTC'));
+			$sName = (string) \preg_replace_callback('/\{date:([^}]+)\}/', fn ($m) => $oNow->format($m[1]),
+				\trim((string) $oConfig->Get('logs', 'auth_logging_filename', '')));
+			$sName = (string) \preg_replace('/[^a-zA-Z0-9@_+=\-\.\/!()\[\]]/', '', \str_replace('..', '.', $sName));
+			if ('' === $sName) {
+				return;
+			}
+			$sPath = (\trim((string) $oConfig->Get('logs', 'path', '')) ?: \APP_PRIVATE_DATA . 'logs') . '/' . $sName;
+			\is_dir(\dirname($sPath)) || \mkdir(\dirname($sPath), 0755, true);
+			$sIp = $this->Manager()->Actions()->Http()->GetClientIp((bool) $oConfig->Get('labs', 'http_client_ip_check_proxy', false));
+			$sUser = (string) \preg_replace('/[^\w@.+-]/', '', $oAccount->Email());
+			\file_put_contents($sPath, '[' . $oNow->format('Y-m-d H:i:s') . "] Auth failed: ip={$sIp} user={$sUser} 2fa={$sOutcome}\n",
+				FILE_APPEND | LOCK_EX);
+		} catch (\Throwable $oError) {
+			// A log that cannot be written must not turn a refusal into an error.
+		}
+	}
+
+	/* ---- the record ---- */
+
+	protected function recordKey() : string
+	{
+		return TwoFactorRecord::key(\APP_SALT);
+	}
+
+	/** The stored record in its current shape, or null when there is none for this account. */
+	protected function loadRecord(MainAccount $oAccount) : ?array
+	{
+		$sData = $this->StorageProvider()->Get($oAccount,
+			\RainLoop\Providers\Storage\Enumerations\StorageType::CONFIG,
+			'two_factor'
+		);
+		$mData = $sData ? static::DecodeKeyValues($sData) : array();
+		if (empty($mData['User']) || $oAccount->Email() !== $mData['User']
+			|| (empty($mData['Secret']) && empty($mData['SecretBox']))) {
+			return null;
+		}
+		return TwoFactorRecord::normalise($mData, $this->recordKey());
+	}
+
+	protected function saveRecord(MainAccount $oAccount, array $aRecord) : bool
+	{
+		return $this->StorageProvider()->Put($oAccount,
+			\RainLoop\Providers\Storage\Enumerations\StorageType::CONFIG,
+			'two_factor',
+			\json_encode($aRecord)
+		);
+	}
+
+	/**
+	 * One code, checked and recorded: failures counted, spent backup codes and
+	 * the last time step stored — whatever the outcome.
+	 */
+	protected function checkCode(MainAccount $oAccount, array $aRecord, string $sCode, bool $bMarkTested = false) : string
+	{
+		$oProvider = $this->TwoFactorAuthProvider($oAccount);
+		[$sOutcome, $aNew] = TwoFactorRecord::check($aRecord, $sCode, $this->recordKey(), \time(),
+			fn (string $sSecret, string $s) => $oProvider->MatchingSlice($sSecret, $s));
+		if ('ok' === $sOutcome && $bMarkTested) {
+			$aNew['Tested'] = true;
+		}
+		$this->saveRecord($oAccount, $aNew);
+		// "replay" and "locked" are not "wrong code": a log that merges them
+		// loses the one line worth reading.
+		$this->Logger()->Write("TFA: {$sOutcome} for {$oAccount->Email()}");
+		return $sOutcome;
 	}
 
 	protected function Logger() : \MailSo\Log\Logger
@@ -290,86 +371,16 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 		return $this->oTwoFactorAuthProvider;
 	}
 
+	/** What the settings screen may know: never the secret, the codes or the QR code. */
 	protected function getTwoFactorInfo(MainAccount $oAccount, bool $bRemoveSecret = false) : array
 	{
-		$sEmail = $oAccount->Email();
-
-		$mData = null;
-
-		$aResult = array(
-			'User' => '',
-			'IsSet' => false,
-			'Enable' => false,
-			'Secret' => '',
-			'BackupCodes' => ''
+		$aRecord = $this->loadRecord($oAccount);
+		return array(
+			'User' => $oAccount->Email(),
+			'IsSet' => null !== $aRecord,
+			'Enable' => $aRecord ? !empty($aRecord['Enable']) : false,
+			'Tested' => $aRecord ? !empty($aRecord['Tested']) : false
 		);
-
-		if (!empty($sEmail)) {
-			$aResult['User'] = $sEmail;
-
-			$sData = $this->StorageProvider()->Get($oAccount,
-				\RainLoop\Providers\Storage\Enumerations\StorageType::CONFIG,
-				'two_factor'
-			);
-
-			if ($sData) {
-				$mData = static::DecodeKeyValues($sData);
-			}
-		}
-
-		if (!empty($aResult['User']) &&
-			!empty($mData['User']) && !empty($mData['Secret']) &&
-			!empty($mData['BackupCodes']) && $sEmail === $mData['User'])
-		{
-			$aResult['IsSet'] = true;
-			$aResult['Enable'] = isset($mData['Enable']) ? !!$mData['Enable'] : false;
-			$aResult['Secret'] = $mData['Secret'];
-			$aResult['BackupCodes'] = $mData['BackupCodes'];
-			$aResult['QRCode'] = $this->getQRCode($oAccount, $mData['Secret']);
-		}
-
-		if ($bRemoveSecret) {
-			if (isset($aResult['Secret'])) {
-				unset($aResult['Secret']);
-			}
-
-			if (isset($aResult['BackupCodes'])) {
-				unset($aResult['BackupCodes']);
-			}
-		}
-
-		return $aResult;
-	}
-
-	protected function removeBackupCodeFromTwoFactorInfo(MainAccount $oAccount, string $sCode) : bool
-	{
-		if (!$oAccount || empty($sCode)) {
-			return false;
-		}
-
-		$sData = $this->StorageProvider()->Get($oAccount,
-			\RainLoop\Providers\Storage\Enumerations\StorageType::CONFIG,
-			'two_factor'
-		);
-
-		if ($sData) {
-			$mData = static::DecodeKeyValues($sData);
-
-			if (!empty($mData['BackupCodes'])) {
-				$sBackupCodes = \preg_replace('/[^\d]+/', ' ', ' '.$mData['BackupCodes'].' ');
-				$sBackupCodes = \str_replace(' '.$sCode.' ', '', $sBackupCodes);
-
-				$mData['BackupCodes'] = \trim(\preg_replace('/[^\d]+/', ' ', $sBackupCodes));
-
-				return $this->StorageProvider()->Put($oAccount,
-					\RainLoop\Providers\Storage\Enumerations\StorageType::CONFIG,
-					'two_factor',
-					\json_encode($mData)
-				);
-			}
-		}
-
-		return false;
 	}
 
 	private static function DecodeKeyValues(string $sData) : array
@@ -377,7 +388,7 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 		if (!\str_contains($sData, 'User')) {
 			$sData = \MailSo\Base\Utils::UrlSafeBase64Decode($sData);
 			if (!\strlen($sData)) {
-				return '';
+				return array();
 			}
 			$sKey = \md5(APP_SALT);
 			$sData = \is_callable('xxtea_decrypt')
@@ -387,7 +398,9 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 		try {
 			return \json_decode($sData, true, 512, JSON_THROW_ON_ERROR) ?: array();
 		} catch (\Throwable $e) {
-			return \unserialize($sData) ?: array();
+			// Never unserialize(): the stored string is data, and unserialize()
+			// of data is object injection.
+			return array();
 		}
 	}
 }

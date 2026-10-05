@@ -22,9 +22,10 @@ const
 		 * @param {?Function} fCallback
 		 * @param {boolean} bEnable
 		 */
-		enableTwoFactor(fCallback, bEnable) {
+		enableTwoFactor(fCallback, bEnable, sCode) {
 			rl.pluginRemoteRequest(fCallback, 'EnableTwoFactor', {
-				Enable: bEnable ? 1 : 0
+				Enable: bEnable ? 1 : 0,
+				Code: sCode || ''
 			});
 		}
 	};
@@ -60,8 +61,14 @@ class TwoFactorAuthSettings
 							fn(iError);
 							rl.settings.get('RequireTwoFactor') && rl.settings.set('SetupTwoFactor', !!iError);
 						}, value);
+					} else if (this.viewEnable_()) {
+						// Switching it off asks for a current code (2.21.0): a
+						// stolen session must not be enough to drop the second factor.
+						TwoFactorAuthTestPopupView.showModal([
+							() => this.viewEnable_(false),
+							(code, done) => Remote.enableTwoFactor(done, false, code)
+						]);
 					} else {
-						value || this.viewEnable_(value);
 						Remote.enableTwoFactor(fn, false);
 					}
 				}
@@ -115,12 +122,19 @@ class TwoFactorAuthSettings
 	}
 
 	clearTwoFactor() {
-		this.hideSecret();
-
-		this.twoFactorTested(false);
-
-		this.clearing(true);
-		rl.pluginRemoteRequest(this.onResult, 'ClearTwoFactorInfo');
+		const clear = (code, done) => {
+			this.hideSecret();
+			this.clearing(true);
+			rl.pluginRemoteRequest((iError, oData) => {
+				const ok = !iError && oData && false !== oData.Result;
+				ok ? (this.twoFactorTested(false), this.onResult(iError, oData)) : this.clearing(false);
+				done && done(ok ? 0 : 1, { Result: ok });
+			}, 'ClearTwoFactorInfo', { Code: code || '' });
+		};
+		// Once on, removing it asks for a current code (2.21.0).
+		this.viewEnable_()
+			? TwoFactorAuthTestPopupView.showModal([() => {}, clear])
+			: clear('');
 	}
 
 	onShow() {
@@ -190,18 +204,26 @@ class TwoFactorAuthTestPopupView extends rl.pluginPopupView {
 
 	testCodeCommand() {
 		this.testing(true);
-		Remote.verifyCode(iError => {
+		// ⚠️ « pas d'erreur » n'est pas « code juste » : le serveur répond
+		// `false` à un mauvais code sans lever d'erreur.
+		this.action((iError, oData) => {
+			const ok = !iError && !!(oData && oData.Result);
 			this.testing(false);
-			this.codeStatus(!iError);
-			iError || (this.onSuccess() | this.close());
+			this.codeStatus(ok);
+			ok && (this.onSuccess() | this.close());
 		}, this.code());
 	}
 
-	onShow(onSuccess) {
+	/**
+	 * @param {Function} onSuccess
+	 * @param {?Function} action fn(code, done) — by default, test the code
+	 */
+	onShow(onSuccess, action) {
 		this.code('');
 		this.codeStatus(null);
 		this.testing(false);
 		this.onSuccess = onSuccess;
+		this.action = action ? (done, code) => action(code, done) : (done, code) => Remote.verifyCode(done, code);
 	}
 }
 
