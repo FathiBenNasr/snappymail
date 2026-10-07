@@ -7,7 +7,9 @@
  */
 declare(strict_types=1);
 
-namespace RainLoop\Exceptions { class ClientException extends \Exception {} }
+namespace RainLoop\Exceptions { class ClientException extends \Exception {
+	public function __construct(int $iCode = 0, ?\Throwable $oPrevious = null, private string $sAdditional = '') { parent::__construct('', $iCode, $oPrevious); }
+	public function getAdditionalMessage() : string { return $this->sAdditional; } } }
 namespace RainLoop { class Notifications { const AuthError = 102; }
 	class Api { public static function Config() { return new class { public function Get($a, $b, $c = null) { return 'smail.tn'; } }; } } }
 namespace RainLoop\Model { class MainAccount { public function __construct(private string $e) {} public function Email() : string { return $this->e; } } }
@@ -99,12 +101,17 @@ namespace {
 	$check('clearing without a code is refused', $p->DoClearTwoFactorInfo()['Result'], false);
 	$check('still on', $p->DoGetTwoFactorInfo()['Result']['Enable'], true);
 
+	$p->params = array();
+	try { $p->DoLogin($p->oAccount); $check('no code: refused', false, true); }
+	catch (\RainLoop\Exceptions\ClientException $e) { $check('no code: refused and named, so the screen asks for it', $e->getAdditionalMessage(), 'TwoFactorCodeRequired'); }
+	$p->params = array('totp_code' => '000000');
+	try { $p->DoLogin($p->oAccount); } catch (\RainLoop\Exceptions\ClientException $e) { $check('a wrong code is not called a missing one', $e->getAdditionalMessage(), ''); }
 	$p->params = array('totp_code' => $current($sSecret));
 	$p->DoLogin($p->oAccount);
 	$check('login with the current code', \end($p->log), 'TFA: Code verified for rym@smail.tn');
 	try { $p->DoLogin($p->oAccount); $check('the same code again is refused', false, true); }
 	catch (\RainLoop\Exceptions\ClientException $e) { $check('the same code again is refused', \in_array('TFA: replay for rym@smail.tn', $p->log, true), true); }
-	$check('and reaches the auth log fail2ban reads', $p->authFailures, 1);
+	$check('and reaches the auth log fail2ban reads (the wrong code above, then the replay)', $p->authFailures, 2);
 
 	$p->params = array('totp_code' => \explode(' ', $c['BackupCodes'])[0]);
 	$p->DoLogin($p->oAccount);

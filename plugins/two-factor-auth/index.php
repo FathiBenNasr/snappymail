@@ -10,11 +10,13 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 {
 	const
 		NAME     = 'Two Factor Authentication',
-		VERSION  = '2.23.0',
-		RELEASE  = '2026-10-05',
+		VERSION  = '2.24.0',
+		RELEASE  = '2026-10-07',
 		REQUIRED = '2.36.0',
 		CATEGORY = 'Login',
-		DESCRIPTION = 'Provides support for TOTP 2FA';
+		DESCRIPTION = 'Provides support for TOTP 2FA',
+		// The additional message of the refusal when the code is missing.
+		CODE_REQUIRED = 'TwoFactorCodeRequired';
 
 	public function Init() : void
 	{
@@ -79,7 +81,11 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 		$sCode = \trim($this->jsonParam('totp_code', ''));
 		if (empty($sCode)) {
 			$this->Logger()->Write("TFA: Code required for {$oAccount->Email()}");
-			throw new ClientException(\RainLoop\Notifications::AuthError);
+			// Named, so the login screen asks for the code instead of saying
+			// "authentication failed": the password was right, and a person
+			// told otherwise resets a good password.
+			// Saying so after a correct password is what every 2FA login does.
+			throw new ClientException(\RainLoop\Notifications::AuthError, null, self::CODE_REQUIRED);
 		}
 		$sOutcome = $this->checkCode($oAccount, $aRecord, $sCode);
 		if ('ok' !== $sOutcome) {
