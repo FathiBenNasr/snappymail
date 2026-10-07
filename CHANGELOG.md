@@ -1,3 +1,36 @@
+## 4.4.0 - 2026-10-07
+
+A security release. Nine issues were reported privately by @ZaphodB, eight of
+which are inherited from SnappyMail and present in its `v2.38.2`. They were
+disclosed publicly on 2026-10-06 before the report reached us, so there is
+nothing left to embargo. Upstream has been told.
+
+### Security
+- An encoded-word in a Message-ID could inject headers into a reply. `DecodeHeaderValue` stripped CR and LF before decoding RFC 2047, so `=?utf-8?B?...?=` carrying a line break came out with it intact; replying copies Message-ID into In-Reply-To, and the reply then carried header lines, or body text, chosen by whoever sent the original. Sent as you, DKIM-signed by your domain, saved to Sent. Line breaks are now stripped after decoding and again in `Mime\Header`, which every outgoing header is built through (GHSA-xqxm-5325-888x)
+- S/MIME reported altered messages as validly signed. `openssl_pkcs7_verify` was called with `PKCS7_NOSIGS`, which tells OpenSSL not to check the signature, and any well-formed signed message then reported success. A message changed after signing displayed as signed by the certificate holder (GHSA-8gqc-2rq5-57j6)
+- Crypt tokens were forgeable. The algorithm came from the token itself, so a client could ask for xxtea anywhere, and the xxtea key was the token's own 16-byte salt followed by the server passphrase. XXTEA reads only the first 16 bytes of a key, so the passphrase never took part and anyone could mint tokens every consumer accepted. Xxtea is now refused where sodium or openssl exists, the algorithm name is checked against a list, and the key is derived through SHA-256 (GHSA-92qg-8v85-4rpc)
+- Two-step verification could be switched off, wiped, replaced or read with nothing but a session. A current code or a backup code is now required for each. Backup codes were also generated with `rand()` rather than a CSPRNG
+- Remote images loaded without consent through `srcset` and CSS. Only `src` goes through the consent and proxy rewrite, and only three CSS properties are handled, so `url()` in `mask-image` and friends fetched on sight. A relative URL did it through the proxy on your own origin, which works as a read receipt
+- Attachments were rendered inline as whatever type their sender declared, so an HTML attachment became a page on your origin. A short list of types is now shown as declared, any other `text/*` shows its source, and the rest download. SVG is included, with a sandbox policy so that opening one directly cannot run script either
+- The `?/Test` integrity diagnostic answered without a login, taking its target from the request's own Host header and printing back every response header
+- S/MIME actions put the client's part id into an IMAP FETCH unchecked
+- The image proxy's SSRF gate let through CGNAT, IETF protocol assignments, benchmarking and multicast ranges, deprecated IPv6 site-local and multicast, the server's own addresses, and IPv6 forms carrying an embedded IPv4 address. The gate was added after 4.3.1 and never shipped without these
+
+### Added
+- Attachment search matches on the real MIME body structure instead of guessing from a `Content-Type` header, and remembers what it learned per mailbox so a repeat search costs nothing. Inline images no longer count as attachments. Thanks to @wojt-janowski (#76)
+- An Unraid Community Applications template, so Tachyon installs from the Apps tab (#113)
+
+### Fixed
+- Decrypted S/MIME messages lost every byte that was not valid UTF-8, so anything not in English arrived full of replacement characters. The decrypted MIME was put through a JSON encoder that substitutes invalid UTF-8, before the parser had a chance to apply each part's declared charset (#32)
+- An encrypted S/MIME message now decrypts as it opens, where an administrator turns that on under Security. It never raises a passphrase dialog to do it: where a passphrase would be needed and is not already held, the message stays encrypted and the Decrypt button works as before (#92)
+- Attachment search aborted on any message the server would not describe, losing the whole result rather than that one message
+- DAV ignored the `[ssl]` configuration that IMAP, SMTP and Sieve honour, so a private CA or a deliberately relaxed install behaved differently for calendars and address books than for mail on the same server. `capath` works as well as `cafile`
+
+### Changed
+- `:latest` no longer follows a pre-release tag. Anything pinned to it, including the Docker examples and the Unraid template, was offered pre-releases as routine updates
+
+---
+
 ## 4.3.1 - 2026-09-29
 
 ### Fixed
