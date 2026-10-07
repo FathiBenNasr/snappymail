@@ -534,6 +534,15 @@ class ServiceActions
 	public function ServiceTest() : string
 	{
 		$this->oHttp->ServerNoCache();
+		// The integrity test sends HEAD requests to a URL built from the request's
+		// Host header and prints back every response header. Open to anyone, that
+		// lets a client choose the target (nginx ignores the port when matching
+		// server_name, so Host: <this host>:<port> reaches it) and read the result.
+		// It is an admin diagnostic; an admin's own browser sends the real Host.
+		if (!$this->oActions->IsAdminLoggined(false)) {
+			\MailSo\Base\Http::StatusHeader(404);
+			return '';
+		}
 		\SnappyMail\Integrity::test();
 		return '';
 	}
