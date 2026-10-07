@@ -1,3 +1,10 @@
+## 4.4.1 - 2026-10-07
+
+### Fixed
+- Upgrading to 4.4.0 could leave you unable to log in, with `Folders error: HTTP Token mismatch` on every attempt. The first request after an upgrade empties the cache directory, and requests arriving together all got past the version check before any of them recorded the new version, so several walked and deleted the same tree at once. One removed a directory another had already listed, and that request died with a fatal part way through the page. The browser then held a page with no usable request token and every later call was rejected, which looked like a login fault rather than an install one. Reported by @realsimix (#121)
+
+---
+
 ## 4.4.0 - 2026-10-07
 
 A security release. Nine issues were reported privately by @ZaphodB, eight of
