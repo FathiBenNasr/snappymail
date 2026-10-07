@@ -8,8 +8,11 @@
 			}
 		};
 
+	let loginView = null;
+
 	addEventListener('rl-view-model', e => {
 		if ('Login' === e.detail.viewModelTemplateID) {
+			loginView = e.detail;
 			const container = e.detail.viewModelDom.querySelector('#plugin-Login-BottomControlGroup'),
 				placeholder = 'PLUGIN_2FA/LABEL_TWO_FACTOR_CODE';
 			if (container) {
@@ -22,6 +25,19 @@
 					+ '" placeholder="'+rl.i18n(placeholder)+'">'
 				+ '</div>'));
 			}
+		}
+	});
+
+	// The password was right and the code is missing: say so, instead of the
+	// "authentication failed" that sends people to reset a good password.
+	// The core sets its own message right after this event, hence the timeout.
+	addEventListener('sm-user-login-response', e => {
+		if (e.detail?.error && 'TwoFactorCodeRequired' === e.detail.data?.messageAdditional && loginView) {
+			setTimeout(() => {
+				loginView.submitError(rl.i18n('PLUGIN_2FA/ERROR_CODE_REQUIRED'));
+				loginView.submitErrorAdditional('');
+				loginView.viewModelDom?.querySelector('input[name=totp_code]')?.focus();
+			}, 0);
 		}
 	});
 
