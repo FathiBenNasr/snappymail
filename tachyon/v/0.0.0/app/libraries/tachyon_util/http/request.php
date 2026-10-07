@@ -151,8 +151,7 @@ abstract class Request
 		if (null !== $sNormalized) {
 			$host = $sNormalized;
 		}
-		$flags = FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE;
-		if (\filter_var($host, FILTER_VALIDATE_IP, $flags)) {
+		if (self::IsPublicIP($host)) {
 			return true;
 		}
 		if (\filter_var($host, FILTER_VALIDATE_IP)) {
@@ -178,11 +177,75 @@ abstract class Request
 			if (null !== $sUnwrapped) {
 				$ip = $sUnwrapped;
 			}
-			if (!\filter_var($ip, FILTER_VALIDATE_IP, $flags)) {
+			if (!self::IsPublicIP($ip)) {
 				return false;
 			}
 		}
 		return true;
+	}
+
+	/**
+	 * Ranges PHP's FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE let
+	 * through although they are not the public internet: RFC 6598 shared
+	 * space (CGNAT, Tailscale, some cloud metadata), IETF protocol
+	 * assignments, benchmarking, multicast, and deprecated IPv6 site-local
+	 * and multicast. Verified against PHP 8.4.
+	 */
+	private const NON_PUBLIC_RANGES = [
+		'100.64.0.0/10',
+		'192.0.0.0/24',
+		'198.18.0.0/15',
+		'224.0.0.0/4',
+		'fec0::/10',
+		'ff00::/8',
+	];
+
+	private static ?array $aLocalAddresses = null;
+
+	/**
+	 * A public address that is not one of this server's own. Without the
+	 * second part a request to the server's public IP reaches services
+	 * that listen on every address but are firewalled from outside, since
+	 * the connection never leaves the host.
+	 */
+	private static function IsPublicIP(string $ip) : bool
+	{
+		if (!\filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
+			return false;
+		}
+		$bin = \inet_pton($ip);
+		foreach (self::NON_PUBLIC_RANGES as $range) {
+			[$net, $bits] = \explode('/', $range);
+			$net = \inet_pton($net);
+			if (\strlen($net) === \strlen($bin) && self::PrefixMatches($bin, $net, (int) $bits)) {
+				return false;
+			}
+		}
+		if (null === self::$aLocalAddresses) {
+			self::$aLocalAddresses = [];
+			foreach ((\function_exists('net_get_interfaces') ? \net_get_interfaces() : false) ?: [] as $aInterface) {
+				foreach ($aInterface['unicast'] ?? [] as $aAddress) {
+					if (!empty($aAddress['address']) && false !== ($sLocal = @\inet_pton($aAddress['address']))) {
+						self::$aLocalAddresses[] = $sLocal;
+					}
+				}
+			}
+		}
+		return !\in_array($bin, self::$aLocalAddresses, true);
+	}
+
+	private static function PrefixMatches(string $bin, string $net, int $bits) : bool
+	{
+		$bytes = \intdiv($bits, 8);
+		if (\substr($bin, 0, $bytes) !== \substr($net, 0, $bytes)) {
+			return false;
+		}
+		$rest = $bits % 8;
+		if (!$rest) {
+			return true;
+		}
+		$mask = (0xff << (8 - $rest)) & 0xff;
+		return (\ord($bin[$bytes]) & $mask) === (\ord($net[$bytes]) & $mask);
 	}
 
 	/**
@@ -270,6 +333,12 @@ abstract class Request
 		if ("\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\xff" === $sPrefix // ::ffff:0:0/96
 			|| "\x00\x64\xff\x9b\x00\x00\x00\x00\x00\x00\x00\x00" === $sPrefix) { // 64:ff9b::/96
 			return (string) \inet_ntop(\substr($sBin, 12, 4));
+		}
+		// 6to4, 2002:V4ADDR::/48 (RFC 3056): the address sits in bytes 2 to 5, so
+		// 2002:7f00:1:: is 127.0.0.1. Deprecated by RFC 7526 and unreachable
+		// without a configured tunnel, but a host that has one would route it.
+		if ("\x20\x02" === \substr($sBin, 0, 2)) {
+			return (string) \inet_ntop(\substr($sBin, 2, 4));
 		}
 		$sLower = \strtolower($host);
 		if (\str_starts_with($sLower, '::')

@@ -381,7 +381,12 @@ class ServiceActions
 					$sMethodName = 'Raw'.$sAction;
 					if (\method_exists($this->oActions, $sMethodName)) {
 						\header('X-Raw-Action: '.$sMethodName);
-						\header('Content-Security-Policy: script-src \'none\'; child-src \'none\'');
+						// Raw responses carry content from the message. Besides scripts and
+						// frames, deny forms, base and everything not needed to show an
+						// image, media, a PDF or plain text.
+						\header('Content-Security-Policy: default-src \'none\'; script-src \'none\'; child-src \'none\'; '
+							. 'form-action \'none\'; base-uri \'none\'; img-src \'self\' data:; media-src \'self\'; '
+							. 'style-src \'self\' \'unsafe-inline\'; object-src \'self\'');
 
 						$sRawError = '';
 						$this->oActions->SetActionParams(array(
@@ -579,6 +584,15 @@ class ServiceActions
 	public function ServiceTest() : string
 	{
 		$this->oHttp->ServerNoCache();
+		// The integrity test sends HEAD requests to a URL built from the request's
+		// Host header and prints back every response header. Open to anyone, that
+		// lets a client choose the target (nginx ignores the port when matching
+		// server_name, so Host: <this host>:<port> reaches it) and read the result.
+		// It is an admin diagnostic; an admin's own browser sends the real Host.
+		if (!$this->oActions->IsAdminLoggined(false)) {
+			\MailSo\Base\Http::StatusHeader(404);
+			return '';
+		}
 		\Tachyon\Util\Integrity::test();
 		return '';
 	}
