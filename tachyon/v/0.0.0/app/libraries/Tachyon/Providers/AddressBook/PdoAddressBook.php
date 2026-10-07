@@ -142,6 +142,26 @@ class PdoAddressBook
 		return $aResult;
 	}
 
+	/**
+	 * Whether to skip deletions, as [protect remote, protect local].
+	 *
+	 * An empty side is far more often a fault than an intent: a fresh or
+	 * rebuilt local store, a DAV listing that came back empty, a stale index.
+	 * Deleting on its word destroys what the other side still holds.
+	 * Local entries marked deleted do not count as live.
+	 */
+	public static function syncDeletionGuards(array $aLocalSyncData, array $aRemoteSyncData) : array
+	{
+		$iLocalLive = 0;
+		foreach ($aLocalSyncData as $aData) {
+			if (empty($aData['deleted'])) {
+				++$iLocalLive;
+			}
+		}
+		$iRemote = \count($aRemoteSyncData);
+		return array(0 === $iLocalLive && 0 < $iRemote, 0 === $iRemote && 0 < $iLocalLive);
+	}
+
 	public function Sync() : bool
 	{
 		if (1 > $this->iUserID) {
@@ -182,6 +202,25 @@ class PdoAddressBook
 
 		$bReadWrite = $this->isDAVReadWrite();
 
+		/**
+		 * An empty list on either side is far more often a fault than a real
+		 * "delete everything": a fresh or rebuilt local store, a DAV listing
+		 * that failed to parse, a stale server-side index. Acting on it
+		 * destroys data the other side still holds, so skip the deletions in
+		 * that direction and let the following import/export reconcile.
+		 */
+		[$bProtectRemote, $bProtectLocal] = static::syncDeletionGuards($aLocalSyncData, $aRemoteSyncData);
+		$iLocalLive = \count(\array_filter($aLocalSyncData, static fn($a) => empty($a['deleted'])));
+		$iRemoteCount = \count($aRemoteSyncData);
+		if ($bProtectRemote) {
+			\Tachyon\Util\Log::warning('PdoAddressBook', "Sync() local store is empty while remote holds"
+				. " {$iRemoteCount} contacts: importing only, no remote deletions");
+		}
+		if ($bProtectLocal) {
+			\Tachyon\Util\Log::warning('PdoAddressBook', "Sync() remote listing is empty while local holds"
+				. " {$iLocalLive} contacts: keeping local, no local deletions");
+		}
+
 		// Delete remote when Mode = read + write
 		if ($bReadWrite) {
 			\Tachyon\Util\Log::info('PdoAddressBook', 'Sync() is import and export');
@@ -190,7 +229,7 @@ class PdoAddressBook
 				if ($aData['deleted']) {
 					++$iCount;
 					unset($aLocalSyncData[$sKey]);
-					if (isset($aRemoteSyncData[$sKey], $aRemoteSyncData[$sKey]['vcf'])) {
+					if (!$bProtectRemote && isset($aRemoteSyncData[$sKey], $aRemoteSyncData[$sKey]['vcf'])) {
 						\Tachyon\Util\HTTP\Stream::JSON(['messsage'=>"Delete remote {$sKey}"]);
 						$this->davClientRequest($oClient, 'DELETE', $sPath.$aRemoteSyncData[$sKey]['vcf']);
 					}
@@ -205,9 +244,11 @@ class PdoAddressBook
 
 		// Delete local
 		$aIdsForDeletion = array();
-		foreach ($aLocalSyncData as $sKey => $aData) {
-			if (!empty($aData['etag']) && !isset($aRemoteSyncData[$sKey])) {
-				$aIdsForDeletion[] = $aData['id_contact'];
+		if (!$bProtectLocal) {
+			foreach ($aLocalSyncData as $sKey => $aData) {
+				if (!empty($aData['etag']) && !isset($aRemoteSyncData[$sKey])) {
+					$aIdsForDeletion[] = $aData['id_contact'];
+				}
 			}
 		}
 		if (\count($aIdsForDeletion)) {
