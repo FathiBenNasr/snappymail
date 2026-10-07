@@ -288,7 +288,13 @@ class ServiceActions
 	public function ServiceProxyExternal() : string
 	{
 		$sData = empty($this->aPaths[1]) ? '' : $this->aPaths[1];
-		if ($sData && $this->Config()->Get('labs', 'use_local_proxy_for_external_images', false)) {
+		// Tachyon : le proxy d'images exige une session (sinon n'importe qui s'en
+		// sert de relais), et ne joint jamais une adresse privee, reservee ou de
+		// cet hote, ni a l'adresse de depart ni a chaque redirection.
+		if ($sData
+		  && $this->Config()->Get('labs', 'use_local_proxy_for_external_images', false)
+		  && $this->oActions->getAccountFromToken(false)
+		) {
 			$this->oActions->verifyCacheByKey($sData);
 			$sUrl = \MailSo\Base\Utils::UrlSafeBase64Decode($sData);
 			if (!empty($sUrl)) {
@@ -296,6 +302,7 @@ class ServiceActions
 				$tmp = \tmpfile();
 				$HTTP = \SnappyMail\HTTP\Request::factory();
 				$HTTP->max_redirects = 2;
+				$HTTP->block_private_ips = true;
 				$HTTP->streamBodyTo($tmp);
 				$oResponse = $HTTP->doRequest('GET', $sUrl);
 				if ($oResponse) {
