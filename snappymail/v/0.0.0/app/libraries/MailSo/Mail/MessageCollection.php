@@ -45,6 +45,11 @@ class MessageCollection extends \MailSo\Base\Collection
 
 	public bool $Limited = false;
 
+	/**
+	 * The search used RFC 6203 FUZZY
+	 */
+	public bool $Fuzzy = false;
+
 	public function append($oMessage, bool $bToTop = false) : void
 	{
 		assert($oMessage instanceof Message);
@@ -70,6 +75,7 @@ class MessageCollection extends \MailSo\Base\Collection
 			'search' => $this->Search,
 			'sort' => $this->Sort,
 			'limited' => $this->Limited,
+			'fuzzy' => $this->Fuzzy,
 			'folder' => $this->FolderInfo
 		));
 	}

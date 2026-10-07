@@ -48,7 +48,20 @@ class CURL extends \SnappyMail\HTTP\Request
 			\curl_setopt($c, CURLOPT_CAINFO, $this->ca_bundle);
 		}
 		if ($extra_headers) {
-			\curl_setopt($c, CURLOPT_HTTPHEADER, $extra_headers);
+			/**
+			 * CURLOPT_HTTPHEADER wants a flat list of "Name: value" strings.
+			 * Callers pass an associative array (CardDAV sends
+			 * ['Content-Type' => 'text/vcard; charset=utf-8']), and curl then
+			 * emits the bare value as a malformed header line and drops it -
+			 * after which CURLOPT_POSTFIELDS makes it default to
+			 * application/x-www-form-urlencoded. Cyrus answers that with
+			 * 403 supported-address-data, so every contact upload failed.
+			 */
+			$aHeaderLines = array();
+			foreach ($extra_headers as $mKey => $sValue) {
+				$aHeaderLines[] = \is_int($mKey) ? $sValue : "{$mKey}: {$sValue}";
+			}
+			\curl_setopt($c, CURLOPT_HTTPHEADER, $aHeaderLines);
 		}
 		if ($this->auth['user'] && $this->auth['type']) {
 			if ($this->auth['type'] & self::AUTH_BEARER ) {

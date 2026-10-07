@@ -155,6 +155,34 @@ class PdoAddressBook
 
 		$bReadWrite = $this->isDAVReadWrite();
 
+		/**
+		 * Empty-set guards.
+		 *
+		 * An empty list on either side is far more often a fault - a fresh or
+		 * rebuilt local store, a DAV listing that failed to parse, a stale
+		 * server-side index - than a genuine "delete everything", and acting on
+		 * it destroys data the other side still holds. Both directions are
+		 * guarded because both have bitten this install: an empty remote
+		 * listing once removed 7 local contacts.
+		 */
+		$iLocalLive = 0;
+		foreach ($aLocalSyncData as $aGuardData) {
+			if (empty($aGuardData['deleted'])) {
+				++$iLocalLive;
+			}
+		}
+		$iRemoteCount = \count($aRemoteSyncData);
+		$bProtectRemote = (0 === $iLocalLive && 0 < $iRemoteCount);
+		$bProtectLocal  = (0 === $iRemoteCount && 0 < $iLocalLive);
+		if ($bProtectRemote) {
+			\SnappyMail\Log::warning('PdoAddressBook', "Sync() local store is empty while remote holds"
+				. " {$iRemoteCount} contacts: importing only, refusing to delete anything remote");
+		}
+		if ($bProtectLocal) {
+			\SnappyMail\Log::warning('PdoAddressBook', "Sync() remote listing is empty while local holds"
+				. " {$iLocalLive} contacts: keeping local, refusing to delete anything local");
+		}
+
 		// Delete remote when Mode = read + write
 		if ($bReadWrite) {
 			\SnappyMail\Log::info('PdoAddressBook', 'Sync() is import and export');
@@ -163,7 +191,7 @@ class PdoAddressBook
 				if ($aData['deleted']) {
 					++$iCount;
 					unset($aLocalSyncData[$sKey]);
-					if (isset($aRemoteSyncData[$sKey], $aRemoteSyncData[$sKey]['vcf'])) {
+					if (!$bProtectRemote && isset($aRemoteSyncData[$sKey], $aRemoteSyncData[$sKey]['vcf'])) {
 						\SnappyMail\HTTP\Stream::JSON(['messsage'=>"Delete remote {$sKey}"]);
 						$this->davClientRequest($oClient, 'DELETE', $sPath.$aRemoteSyncData[$sKey]['vcf']);
 					}
@@ -178,9 +206,11 @@ class PdoAddressBook
 
 		// Delete local
 		$aIdsForDeletion = array();
-		foreach ($aLocalSyncData as $sKey => $aData) {
-			if (!empty($aData['etag']) && !isset($aRemoteSyncData[$sKey])) {
-				$aIdsForDeletion[] = $aData['id_contact'];
+		if (!$bProtectLocal) {
+			foreach ($aLocalSyncData as $sKey => $aData) {
+				if (!empty($aData['etag']) && !isset($aRemoteSyncData[$sKey])) {
+					$aIdsForDeletion[] = $aData['id_contact'];
+				}
 			}
 		}
 		if (\count($aIdsForDeletion)) {

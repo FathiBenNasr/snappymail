@@ -669,9 +669,8 @@ class MailClient
 			$oSearchCriterias->prepend(($bReturnUid ? 'UID ' : '') . $oParams->oSequenceSet);
 		}
 
-/*
+		// RFC 6203: only when the client asked for it and the server announces it
 		$oSearchCriterias->fuzzy = $oParams->bSearchFuzzy && $this->oImapClient->hasCapability('SEARCH=FUZZY');
-*/
 		$sSerializedHash = '';
 		$sSerializedLog = '';
 		if ($bUseCache && $oInfo->etag) {
@@ -793,6 +792,9 @@ class MailClient
 		$bUseSort = ($oParams->bUseSort || $oParams->sSort) && $this->oImapClient->hasCapability('SORT');
 		$oParams->bUseSort = $bUseSort;
 		$oParams->sSearch = $sSearch;
+		// Tell the client whether FUZZY was really used, so it can offer an exact search
+		$oMessageCollection->Fuzzy = \strlen($sSearch) && $oParams->bSearchFuzzy
+			&& $this->oImapClient->hasCapability('SEARCH=FUZZY');
 
 		$aAllThreads = [];
 		$aUnseenUIDs = [];
