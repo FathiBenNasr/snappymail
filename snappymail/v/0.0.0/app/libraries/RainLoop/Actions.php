@@ -777,8 +777,13 @@ class Actions
 		$bAppJsDebug = $this->oConfig->Get('debug', 'javascript', false)
 			|| $this->oConfig->Get('debug', 'enable', false);
 
+		// « ?r= » : le JavaScript compile a ete corrige sur place (report des
+		// correctifs de securite de Tachyon, 7 octobre 2026) sans changer de
+		// version. Ces fichiers sont servis avec un cache d'un an sur une adresse
+		// fixe ; sans ce parametre, un navigateur deja venu garderait l'ancien.
+		// boot.js derive l'adresse d'app.js de celle-ci, parametre compris.
 		$aResult['StaticLibsJs'] = Utils::WebStaticPath('js/' . ($bAppJsDebug ? '' : 'min/') .
-			'libs' . ($bAppJsDebug ? '' : '.min') . '.js');
+			'libs' . ($bAppJsDebug ? '' : '.min') . '.js') . '?r=securite-20261007';
 
 		$this->oPlugins->InitAppData($bAdmin, $aResult, $oAccount);
 
