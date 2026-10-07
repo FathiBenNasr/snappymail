@@ -33,7 +33,10 @@ $cases = [
 	'Text/HTML; charset=utf-8' => 'text/plain',
 	'text/xml' => 'text/plain',
 	// downloaded
-	'image/svg+xml' => null,
+	// Shown inline: mail uses SVG for logos, an <img> never runs script, and the
+	// caller sends 'Content-Security-Policy: sandbox' alongside it.
+	'image/svg+xml' => 'image/svg+xml',
+	'image/svg+xml; charset=utf-8' => 'image/svg+xml',
 	'application/xhtml+xml' => null,
 	'application/xml' => null,
 	'application/octet-stream' => null,
