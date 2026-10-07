@@ -334,6 +334,12 @@ abstract class Request
 			|| "\x00\x64\xff\x9b\x00\x00\x00\x00\x00\x00\x00\x00" === $sPrefix) { // 64:ff9b::/96
 			return (string) \inet_ntop(\substr($sBin, 12, 4));
 		}
+		// 6to4, 2002:V4ADDR::/48 (RFC 3056): the address sits in bytes 2 to 5, so
+		// 2002:7f00:1:: is 127.0.0.1. Deprecated by RFC 7526 and unreachable
+		// without a configured tunnel, but a host that has one would route it.
+		if ("\x20\x02" === \substr($sBin, 0, 2)) {
+			return (string) \inet_ntop(\substr($sBin, 2, 4));
+		}
 		$sLower = \strtolower($host);
 		if (\str_starts_with($sLower, '::')
 			&& false !== \filter_var(\substr($sLower, 2), FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
