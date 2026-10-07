@@ -110,6 +110,15 @@ class ServiceActions
 						$this->oActions->logWrite("{$_POST['XToken']} !== {$token} for {$sEmail}", \LOG_ERR, 'XToken');
 						throw new Exceptions\ClientException(Notifications::InvalidToken, null, 'XToken mismatch');
 					}
+				} else {
+					// Tachyon ba3741080 + bff6431d6 : une action ne doit jamais pouvoir
+					// partir d'un GET sans en-tete (une <img src>, une navigation) : sans
+					// X-SM-Token, le jeton doit venir en parametre. L'interface envoie
+					// toujours l'en-tete ; seuls les appelants sans en-tete sont touches.
+					if (empty($_GET['XToken']) || $_GET['XToken'] !== $token) {
+						$this->oActions->logWrite('missing XToken', \LOG_ERR, 'Token');
+						throw new Exceptions\ClientException(Notifications::InvalidToken, null, 'XToken mismatch');
+					}
 				}
 			}
 
