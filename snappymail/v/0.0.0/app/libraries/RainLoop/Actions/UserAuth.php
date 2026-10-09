@@ -418,6 +418,34 @@ trait UserAuth
 		return null;
 	}
 
+	/**
+	 * Revoke every "remember me" token of an account, on every device.
+	 * WHY (S-21, audit 2026-10): a reconnection by SignMe cookie rebuilds the
+	 * session from the cookie and never goes through login.success, where a
+	 * second factor is checked. A token remembered before the second factor
+	 * was enabled therefore keeps opening the account without a code, for 30
+	 * days renewed at each use. The two-factor plugin must call this when the
+	 * factor is enabled (and a password change should too).
+	 * Clear($oAccount, StorageType::SIGN_ME, '') does NOT do it: with an empty
+	 * key the file name is the .sign_me directory itself and unlink() fails.
+	 * Deleting the server half is enough: the cookie alone cannot be decrypted.
+	 * @return int the number of tokens revoked
+	 */
+	public function ClearAllSignMeTokens(MainAccount $oAccount) : int
+	{
+		$sDir = $this->StorageProvider()->GenerateFilePath($oAccount, StorageType::SIGN_ME);
+		$iCount = 0;
+		if ($sDir && \is_dir($sDir)) {
+			$sDir = \rtrim($sDir, '/') . '/';
+			foreach (\scandir($sDir) ?: [] as $sName) {
+				if ('.' !== $sName && '..' !== $sName && \is_file($sDir . $sName) && \unlink($sDir . $sName)) {
+					++$iCount;
+				}
+			}
+		}
+		return $iCount;
+	}
+
 	protected function ClearSignMeData() : void
 	{
 		$aTokenData = static::GetSignMeToken();
