@@ -10,13 +10,15 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 {
 	const
 		NAME     = 'Two Factor Authentication',
-		VERSION  = '2.24.0',
-		RELEASE  = '2026-10-07',
+		VERSION  = '2.25.0',
+		RELEASE  = '2026-10-09',
 		REQUIRED = '2.36.0',
 		CATEGORY = 'Login',
 		DESCRIPTION = 'Provides support for TOTP 2FA',
 		// The additional message of the refusal when the code is missing.
-		CODE_REQUIRED = 'TwoFactorCodeRequired';
+		CODE_REQUIRED = 'TwoFactorCodeRequired',
+		// The additional message when a protected account is refused as an additional one.
+		NOT_ADDITIONAL = 'TwoFactorNotAdditional';
 
 	public function Init() : void
 	{
@@ -26,6 +28,9 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 		$this->addJs('js/TwoFactorAuthSettings.js');
 
 		$this->addHook('login.success', 'DoLogin');
+		// login.success runs for the main account only: an additional account
+		// goes through filter.account alone, at setup and on every request.
+		$this->addHook('filter.account', 'FilterAccount');
 		$this->addHook('filter.app-data', 'FilterAppData');
 
 		$this->addJsonHook('GetTwoFactorInfo', 'DoGetTwoFactorInfo');
@@ -69,7 +74,51 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 				$aData = $this->getTwoFactorInfo($this->getMainAccountFromToken());
 				$aResult['SetupTwoFactor'] = empty($aData['IsSet']) || empty($aData['Enable']);
 			}
+
+			// The settings screen states that mail apps need app passwords only
+			// where that is actually enforced for this account (S-09): a promise
+			// the server does not keep is worse than no promise.
+			$aResult['TwoFactorAppPasswords'] = false;
+			if (!empty($aResult['Auth'])) {
+				try {
+					$aResult['TwoFactorAppPasswords'] = null !== $this->appPasswordsConf($this->getMainAccountFromToken());
+				} catch (\Throwable $oError) {
+					// No account, no promise.
+				}
+			}
 		}
+	}
+
+	/**
+	 * An additional account whose own second factor is on is refused (S-22).
+	 *
+	 * Adding an account (DoAccountSetup) calls LoginProcess(..., false), which
+	 * never runs login.success — so DoLogin, and the code, were skipped: the
+	 * password of a protected mailbox was enough to read it through someone
+	 * else's session. There is no field for a code in the additional-account
+	 * dialog, so the only safe answer is no. The hook also runs each time an
+	 * additional account is rebuilt from its cookie, which closes accounts
+	 * that were added before this check existed, or before their owner turned
+	 * the second factor on.
+	 */
+	public function FilterAccount($oAccount)
+	{
+		if (!($oAccount instanceof \RainLoop\Model\AdditionalAccount)) {
+			return;
+		}
+		// By address: the storage of an AdditionalAccount object resolves to
+		// the directory of the main account that holds it, not to its own.
+		$aRecord = $this->loadRecordFor($oAccount->Email());
+		if (!$aRecord || empty($aRecord['Enable'])) {
+			return;
+		}
+		$this->Logger()->Write("TFA: {$oAccount->Email()} refused as an additional account, its second factor is on");
+		try {
+			// Back to the main account, so the session is not left on a refused one.
+			$this->Manager()->Actions()->SetAdditionalAuthToken(null);
+		} catch (\Throwable $oError) {
+		}
+		throw new ClientException(\RainLoop\Notifications::AuthError, null, self::NOT_ADDITIONAL);
 	}
 
 	public function DoLogin(MainAccount $oAccount)
@@ -225,15 +274,31 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 			return $this->jsonResponse(__FUNCTION__, false);
 		}
 
+		// checkCode() may have written the record (time step, failures): build on that one.
+		$aRecord = $this->loadRecord($oAccount) ?? $aRecord;
+
 		$oActions = $this->Manager()->Actions();
 		if ($oActions->HasActionParam('EnableTwoFactor')) {
 			$sValue = $oActions->GetActionParam('EnableTwoFactor', '');
 			$oActions->SettingsProvider()->Load($oAccount)->SetConf('EnableTwoFactor', !empty($sValue));
 		}
 
+		// Required before the second factor is on, not after (S-09): when the
+		// store is there and cannot be written, enabling is refused rather than
+		// left on while the main password still opens IMAP and SMTP.
+		if ($bEnable && !$this->appPasswordsRequired($oAccount, true)) {
+			return $this->jsonResponse(__FUNCTION__, false);
+		}
+
 		$aRecord['Enable'] = $bEnable;
 		$bSaved = $this->saveRecord($oAccount, $aRecord);
-		$bSaved && $this->appPasswordsRequired($oAccount, $bEnable);
+		if (!$bSaved) {
+			$bEnable && $this->appPasswordsRequired($oAccount, false);
+		} else if ($bEnable) {
+			$this->forgetRememberedDevices($oAccount);
+		} else {
+			$this->appPasswordsRequired($oAccount, false);
+		}
 		return $this->jsonResponse(__FUNCTION__, $bSaved);
 	}
 
@@ -307,21 +372,66 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 	}
 
 	/**
-	 * Mail apps (IMAP, SMTP, DAV) take app passwords only while the second
-	 * factor is on — the SnappyMail-mots-de-passe-appli store, when it is
-	 * installed (its plugin loads the shared code). Without it, nothing
-	 * changes: the second factor then guards the webmail alone, as before.
+	 * The "remember me" tokens of the account, all of them (S-21, plugin side).
+	 *
+	 * The core rebuilds a remembered session from its cookie without running
+	 * login.success, so a device remembered before the second factor existed
+	 * — or by whoever had the password then — was never asked for a code, and
+	 * the token renews itself for 30 days at each use. Turning the second
+	 * factor on is the moment those devices stop being trusted. A device
+	 * remembered afterwards went through DoLogin, code included.
 	 */
-	protected function appPasswordsRequired(MainAccount $oAccount, bool $bRequired) : void
+	protected function forgetRememberedDevices(MainAccount $oAccount) : void
 	{
-		if (!\class_exists('\\Convergent\\Appli\\Appli')) {
+		$iType = \RainLoop\Providers\Storage\Enumerations\StorageType::SIGN_ME;
+		$sDir = (string) $this->StorageProvider()->GenerateFilePath($oAccount, $iType);
+		if ('' === $sDir) {
+			$this->Logger()->Write("TFA: remembered devices of {$oAccount->Email()} could not be listed");
 			return;
 		}
-		$aConf = \Convergent\Appli\Appli::conf((string) $this->Config()->Get('plugin', 'app_passwords_conf', '/etc/sky-appli.conf'));
-		if ($aConf && null !== \Convergent\Appli\Appli::compte($oAccount->Email(), (array) $aConf['domaines'])
-			&& !\Convergent\Appli\Appli::poserExigence($aConf, $oAccount->Email(), $bRequired)) {
-			$this->Logger()->Write('TFA: could not ' . ($bRequired ? 'require' : 'release') . " app passwords for {$oAccount->Email()}");
+		$iGone = 0;
+		foreach (\glob(\rtrim($sDir, '/') . '/*') ?: array() as $sFile) {
+			\is_file($sFile) && !\is_link($sFile) && \unlink($sFile) && ++$iGone;
 		}
+		$this->Logger()->Write("TFA: {$iGone} remembered device(s) forgotten for {$oAccount->Email()}");
+	}
+
+	/**
+	 * The SnappyMail-mots-de-passe-appli configuration when it applies to this
+	 * account — store loaded, configuration readable, domain served — else null.
+	 * Only then is "mail apps need an app password" true.
+	 */
+	protected function appPasswordsConf(MainAccount $oAccount) : ?array
+	{
+		if (!\class_exists('\\Convergent\\Appli\\Appli')) {
+			return null;
+		}
+		$aConf = \Convergent\Appli\Appli::conf((string) $this->Config()->Get('plugin', 'app_passwords_conf', '/etc/sky-appli.conf'));
+		return $aConf && null !== \Convergent\Appli\Appli::compte($oAccount->Email(), (array) $aConf['domaines'])
+			? $aConf : null;
+	}
+
+	/**
+	 * Mail apps (IMAP, SMTP, DAV) take app passwords only while the second
+	 * factor is on — the SnappyMail-mots-de-passe-appli store, when it is
+	 * installed (its plugin loads the shared code). Without it the second
+	 * factor guards the webmail alone, and the settings screen no longer says
+	 * otherwise (S-09).
+	 *
+	 * False only when the store applies and could not be written: the caller
+	 * refuses to enable. True when it was written, or when it does not apply.
+	 */
+	protected function appPasswordsRequired(MainAccount $oAccount, bool $bRequired) : bool
+	{
+		$aConf = $this->appPasswordsConf($oAccount);
+		if (null === $aConf) {
+			return true;
+		}
+		if (\Convergent\Appli\Appli::poserExigence($aConf, $oAccount->Email(), $bRequired)) {
+			return true;
+		}
+		$this->Logger()->Write('TFA: could not ' . ($bRequired ? 'require' : 'release') . " app passwords for {$oAccount->Email()}");
+		return false;
 	}
 
 	/* ---- the record ---- */
@@ -334,12 +444,21 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 	/** The stored record in its current shape, or null when there is none for this account. */
 	protected function loadRecord(MainAccount $oAccount) : ?array
 	{
-		$sData = $this->StorageProvider()->Get($oAccount,
+		return $this->loadRecordFor($oAccount->Email());
+	}
+
+	/** The same, by address: the storage path of an address is its own account's. */
+	protected function loadRecordFor(string $sEmail) : ?array
+	{
+		if ('' === $sEmail) {
+			return null;
+		}
+		$sData = $this->StorageProvider()->Get($sEmail,
 			\RainLoop\Providers\Storage\Enumerations\StorageType::CONFIG,
 			'two_factor'
 		);
 		$mData = $sData ? static::DecodeKeyValues($sData) : array();
-		if (empty($mData['User']) || $oAccount->Email() !== $mData['User']
+		if (empty($mData['User']) || $sEmail !== $mData['User']
 			|| (empty($mData['Secret']) && empty($mData['SecretBox']))) {
 			return null;
 		}
@@ -355,23 +474,78 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 		);
 	}
 
+	/** How long a check waits for another one on the same account, in seconds. */
+	protected float $fLockWait = 3.0;
+
 	/**
 	 * One code, checked and recorded: failures counted, spent backup codes and
 	 * the last time step stored — whatever the outcome.
+	 *
+	 * Read, decide and write happen under an exclusive lock per account, and
+	 * the record is read again once the lock is held (S-49): without it,
+	 * parallel attempts all read the same Failures and the last write wins,
+	 * so the lockout counted bursts rather than attempts, and one backup code
+	 * or one time step could be spent twice. The record passed in only says
+	 * that one existed; the one under the lock decides.
+	 * A lock that cannot be taken refuses: "busy" is not "ok".
 	 */
 	protected function checkCode(MainAccount $oAccount, array $aRecord, string $sCode, bool $bMarkTested = false) : string
 	{
-		$oProvider = $this->TwoFactorAuthProvider($oAccount);
-		[$sOutcome, $aNew] = TwoFactorRecord::check($aRecord, $sCode, $this->recordKey(), \time(),
-			fn (string $sSecret, string $s) => $oProvider->MatchingSlice($sSecret, $s));
-		if ('ok' === $sOutcome && $bMarkTested) {
-			$aNew['Tested'] = true;
+		$rLock = $this->lockRecord($oAccount);
+		if (!$rLock) {
+			$this->Logger()->Write("TFA: busy for {$oAccount->Email()}");
+			return 'busy';
 		}
-		$this->saveRecord($oAccount, $aNew);
+		try {
+			$aRecord = $this->loadRecord($oAccount);
+			if (!$aRecord) {
+				return 'wrong';
+			}
+			$oProvider = $this->TwoFactorAuthProvider($oAccount);
+			[$sOutcome, $aNew] = TwoFactorRecord::check($aRecord, $sCode, $this->recordKey(), \time(),
+				fn (string $sSecret, string $s) => $oProvider->MatchingSlice($sSecret, $s));
+			if ('ok' === $sOutcome && $bMarkTested) {
+				$aNew['Tested'] = true;
+			}
+			$this->saveRecord($oAccount, $aNew);
+		} finally {
+			\flock($rLock, LOCK_UN);
+			\fclose($rLock);
+		}
 		// "replay" and "locked" are not "wrong code": a log that merges them
 		// loses the one line worth reading.
 		$this->Logger()->Write("TFA: {$sOutcome} for {$oAccount->Email()}");
 		return $sOutcome;
+	}
+
+	/** The lock file sits next to the record, in the account's own directory. */
+	protected function lockPath(MainAccount $oAccount) : string
+	{
+		$sDir = (string) $this->StorageProvider()->GenerateFilePath($oAccount,
+			\RainLoop\Providers\Storage\Enumerations\StorageType::CONFIG, true);
+		return '' === $sDir ? '' : \rtrim($sDir, '/') . '/two_factor.lock';
+	}
+
+	/** @return resource|null the held lock, or null when it could not be had in time */
+	protected function lockRecord(MainAccount $oAccount)
+	{
+		$sPath = $this->lockPath($oAccount);
+		if ('' === $sPath || \is_link($sPath)) {
+			return null;
+		}
+		$rLock = @\fopen($sPath, 'c');
+		if (!$rLock) {
+			return null;
+		}
+		$fUntil = \microtime(true) + $this->fLockWait;
+		do {
+			if (\flock($rLock, LOCK_EX | LOCK_NB)) {
+				return $rLock;
+			}
+			\usleep(20000);
+		} while (\microtime(true) < $fUntil);
+		\fclose($rLock);
+		return null;
 	}
 
 	protected function Logger() : \MailSo\Log\Logger

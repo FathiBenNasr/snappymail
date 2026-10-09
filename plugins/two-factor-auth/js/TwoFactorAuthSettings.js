@@ -38,6 +38,10 @@ class TwoFactorAuthSettings
 		this.clearing = ko.observable(false);
 		this.secreting = ko.observable(false);
 
+		// The app-password note only where the server enforces it (S-09):
+		// a screen that promises a protection the server lacks misleads.
+		this.appPasswordsNote = ko.observable(!!rl.settings.get('TwoFactorAppPasswords'));
+
 		this.viewUser = ko.observable('');
 		this.twoFactorStatus = ko.observable(false);
 
@@ -138,6 +142,7 @@ class TwoFactorAuthSettings
 	}
 
 	onShow() {
+		this.appPasswordsNote(!!rl.settings.get('TwoFactorAppPasswords'));
 		this.hideSecret('');
 	}
 
