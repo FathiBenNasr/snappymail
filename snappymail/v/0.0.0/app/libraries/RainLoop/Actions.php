@@ -782,8 +782,10 @@ class Actions
 		// version. Ces fichiers sont servis avec un cache d'un an sur une adresse
 		// fixe ; sans ce parametre, un navigateur deja venu garderait l'ancien.
 		// boot.js derive l'adresse d'app.js de celle-ci, parametre compris.
+		// 20261009 : S-19 de l'audit (plainToHtml) corrige a son tour dans
+		// app.js / app.min.js ; une valeur neuve a chaque correction, jamais reprise.
 		$aResult['StaticLibsJs'] = Utils::WebStaticPath('js/' . ($bAppJsDebug ? '' : 'min/') .
-			'libs' . ($bAppJsDebug ? '' : '.min') . '.js') . '?r=securite-20261007';
+			'libs' . ($bAppJsDebug ? '' : '.min') . '.js') . '?r=securite-20261009';
 
 		$this->oPlugins->InitAppData($bAdmin, $aResult, $oAccount);
 

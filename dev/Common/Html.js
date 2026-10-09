@@ -827,11 +827,16 @@ export const
 			.replace(/&/g, '&amp;')
 			.replace(/>/g, '&gt;')
 			.replace(/</g, '&lt;')
+			// S-19 (audit 2026-10): only & < > were escaped, so a '"' in the
+			// matched text closed href="..." and the rest became attributes
+			// (a quoted local part "style=position:fixed..."@x.tn, or a URL whose
+			// host stripTracking() cannot parse). Quote-escape every value that
+			// goes into an attribute.
 			.replace(urlRegExp, (...m) => {
 				m[0] = stripTracking(m[0]);
-				return `<a href="${m[0]}" target="_blank">${m[0]}</a>`;
+				return `<a href="${m[0].replace(/"/g, '&quot;')}" target="_blank">${m[0]}</a>`;
 			})
-			.replace(email, '$1<a href="mailto:$2">$2</a>')
+			.replace(email, (m, before, addr) => `${before}<a href="mailto:${addr.replace(/"/g, '&quot;')}">${addr}</a>`)
 			.replace(tel, '<a href="$1">$1</a>')
 			.replace(/~~~blockquote~~~\s*/g, '<blockquote>')
 			.replace(/\s*~~~\/blockquote~~~/g, '</blockquote>')
