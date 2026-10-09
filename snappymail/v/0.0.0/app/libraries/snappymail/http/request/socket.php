@@ -54,6 +54,17 @@ class Socket extends \SnappyMail\HTTP\Request
 		}
 
 		$context = \stream_context_create();
+		if ($this->block_private_ips && !\filter_var(\trim($parts['host'], '[]'), FILTER_VALIDATE_IP)) {
+			// WHY (S-06): connect to the address that was checked, not to a
+			// second resolution of the name (DNS rebinding). TLS still checks
+			// the certificate against the name through peer_name.
+			$aIPs = static::ResolvePublicHost($request_url);
+			if (!$aIPs) {
+				throw new \RuntimeException("URI host is not a public IP for {$request_url}");
+			}
+			\stream_context_set_option($context, 'ssl', 'peer_name', $parts['host']);
+			$parts['host'] = \str_contains($aIPs[0], ':') ? "[{$aIPs[0]}]" : $aIPs[0];
+		}
 		if ('https' === $parts['scheme']) {
 			$parts['host'] = 'ssl://'.$parts['host'];
 			\stream_context_set_option($context, 'ssl', 'verify_peer_name', true);

@@ -30,6 +30,7 @@ class Client
 	 *   * userName (optional)
 	 *   * password (optional)
 	 *   * proxy (optional)
+	 *   * allowPrivateHosts (optional, true only for an administrator-listed host)
 	 */
 	function __construct(array $settings)
 	{
@@ -48,6 +49,16 @@ class Client
 		$this->HTTP->max_response_kb = 0;
 		$this->HTTP->timeout = 15; // timeout in seconds.
 		$this->HTTP->max_redirects = 0;
+		/**
+		 * WHY (S-06): the base URI comes from a user's sync settings and the
+		 * hrefs a remote server answers, so every request is attacker-chosen
+		 * until proven otherwise. Fail closed: internal addresses are refused
+		 * and the checked address is pinned, unless the caller states that this
+		 * host is one the administrator listed. Credentials ride in Basic, so
+		 * the certificate is always verified.
+		 */
+		$this->HTTP->block_private_ips = empty($settings['allowPrivateHosts']);
+		$this->HTTP->verify_peer = true;
 	}
 
 	/**

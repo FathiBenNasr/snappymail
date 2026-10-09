@@ -123,9 +123,23 @@ abstract class Request
 	 */
 	public static function URIHasPublicHost(string $uri) : bool
 	{
+		return null !== self::ResolvePublicHost($uri);
+	}
+
+	/**
+	 * The addresses the URI host stands for, when every one of them is
+	 * public; null otherwise (literal non-public IP, a name with at least
+	 * one non-public address, an unresolvable name).
+	 * WHY a list and not a yes/no: checking a name and letting the client
+	 * resolve it again leaves a window for a DNS answer that changes in
+	 * between (rebinding). Callers that pin the connection to what was
+	 * checked (CURLOPT_RESOLVE) need the checked addresses themselves.
+	 */
+	public static function ResolvePublicHost(string $uri) : ?array
+	{
 		$host = \parse_url($uri, PHP_URL_HOST);
 		if (!\is_string($host) || '' === $host) {
-			return false;
+			return null;
 		}
 		// Bracketed IPv6 literals (http://[::1]/): parse_url keeps the
 		// brackets, which filter_var rejects, so strip them first.
@@ -139,7 +153,9 @@ abstract class Request
 		// those as IPv4.
 		$sUnwrapped = self::UnwrapEmbeddedIPv4($host);
 		if (null !== $sUnwrapped) {
-			$host = $sUnwrapped;
+			if (!self::IsPublicIP($sUnwrapped)) {
+				return null;
+			}
 		}
 		// Numeric IPv4 literals in non-standard forms (http://2130706433/,
 		// http://017700000001/, http://0x7f000001/, http://127.1/,
@@ -149,13 +165,10 @@ abstract class Request
 		// hostnames, so normalize to dotted decimal before validation.
 		$sNormalized = self::NormalizeNumericIPv4($host);
 		if (null !== $sNormalized) {
-			$host = $sNormalized;
-		}
-		if (self::IsPublicIP($host)) {
-			return true;
+			return self::IsPublicIP($sNormalized) ? [$sNormalized] : null;
 		}
 		if (\filter_var($host, FILTER_VALIDATE_IP)) {
-			return false; // literal non-public IP
+			return self::IsPublicIP($host) ? [$host] : null;
 		}
 		$ips = array();
 		foreach (\dns_get_record($host, DNS_A | DNS_AAAA) ?: array() as $record) {
@@ -170,32 +183,51 @@ abstract class Request
 			$ips = \gethostbynamel($host) ?: array();
 		}
 		if (!$ips) {
-			return false; // fail closed on unresolvable hosts
+			return null; // fail closed on unresolvable hosts
 		}
 		foreach ($ips as $ip) {
 			$sUnwrapped = self::UnwrapEmbeddedIPv4($ip);
-			if (null !== $sUnwrapped) {
-				$ip = $sUnwrapped;
-			}
-			if (!self::IsPublicIP($ip)) {
-				return false;
+			if (!self::IsPublicIP($sUnwrapped ?? $ip)) {
+				return null;
 			}
 		}
-		return true;
+		return $ips;
 	}
 
 	/**
-	 * Ranges PHP's FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE let
-	 * through although they are not the public internet: RFC 6598 shared
-	 * space (CGNAT, Tailscale, some cloud metadata), IETF protocol
-	 * assignments, benchmarking, multicast, and deprecated IPv6 site-local
-	 * and multicast. Verified against PHP 8.4.
+	 * Ranges that are not the public internet, checked on top of PHP's
+	 * FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE: those let
+	 * through RFC 6598 shared space (CGNAT, Tailscale, some cloud metadata),
+	 * IETF protocol assignments, benchmarking, multicast, deprecated IPv6
+	 * site-local, and on PHP 8.5 the IPv6 documentation prefix. The private
+	 * and reserved ranges PHP does know are listed too, so the result does
+	 * not move with the PHP version.
 	 */
 	private const NON_PUBLIC_RANGES = [
+		'0.0.0.0/8',
+		'10.0.0.0/8',
 		'100.64.0.0/10',
+		'127.0.0.0/8',
+		'169.254.0.0/16',
+		'172.16.0.0/12',
 		'192.0.0.0/24',
+		'192.0.2.0/24',
+		'192.168.0.0/16',
 		'198.18.0.0/15',
+		'198.51.100.0/24',
+		'203.0.113.0/24',
 		'224.0.0.0/4',
+		'240.0.0.0/4',
+		// IPv6. Loopback, link-local and unique-local are repeated here although
+		// FILTER_FLAG_NO_*_RANGE covers them today: what is refused must not
+		// depend on the PHP version (PHP 8.5 lets 2001:db8::/32 through, S-06).
+		'::/128',
+		'::1/128',
+		'64:ff9b:1::/48',   // NAT64 local-use prefix, RFC 8215
+		'100::/64',         // discard-only, RFC 6666
+		'2001:db8::/32',    // documentation, RFC 3849
+		'fc00::/7',
+		'fe80::/10',
 		'fec0::/10',
 		'ff00::/8',
 	];

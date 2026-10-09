@@ -212,6 +212,7 @@ Warning: only enable when server does not do this, else double compression error
 				'enable'            => array(false, 'Enable contacts'),
 				'allow_sync'        => array(false),
 				'sync_interval'     => array(20),
+				'sync_allowed_hosts' => array('', 'Comma-separated DAV hosts (host or host:port) that may resolve to an internal address. Any other sync host must be public, https only'),
 				'type'              => array('sqlite'),
 				'pdo_dsn'           => array('host=127.0.0.1;port=3306;dbname=snappymail'),
 				'pdo_user'          => array('root'),

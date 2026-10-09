@@ -47,6 +47,27 @@ class CURL extends \SnappyMail\HTTP\Request
 		if ($this->ca_bundle) {
 			\curl_setopt($c, CURLOPT_CAINFO, $this->ca_bundle);
 		}
+		if ($this->block_private_ips && !$this->proxy) {
+			/**
+			 * WHY (S-06, S-42): canFetchURI() checked the name, but curl would
+			 * resolve it again on its own; a DNS answer that changes in between
+			 * (rebinding) would reach an internal address. Resolve once more,
+			 * validate, and hand curl exactly the addresses that passed.
+			 * Behind a proxy the proxy connects, so there is nothing to pin.
+			 */
+			$aIPs = static::ResolvePublicHost($request_url);
+			if (!$aIPs) {
+				\curl_close($c);
+				throw new \RuntimeException("URI host is not a public IP for {$request_url}");
+			}
+			$sHost = \parse_url($request_url, PHP_URL_HOST);
+			if (!\filter_var(\trim($sHost, '[]'), FILTER_VALIDATE_IP)) {
+				$iPort = \parse_url($request_url, PHP_URL_PORT)
+					?: static::getSchemePort(\strtolower((string) \parse_url($request_url, PHP_URL_SCHEME)));
+				$sIP = $aIPs[0];
+				\curl_setopt($c, CURLOPT_RESOLVE, ["{$sHost}:{$iPort}:" . (\str_contains($sIP, ':') ? "[{$sIP}]" : $sIP)]);
+			}
+		}
 		if ($extra_headers) {
 			/**
 			 * CURLOPT_HTTPHEADER wants a flat list of "Name: value" strings.

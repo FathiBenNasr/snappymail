@@ -298,7 +298,7 @@ trait CardDAV
 		#[\SensitiveParameter]
 		string $sPassword,
 		string $sProxy = ''
-	) : DAVClient
+	) : ?DAVClient
 	{
 		if (!\preg_match('/^http[s]?:\/\//i', $sUrl)) {
 			$sUrl = \preg_replace('/^fruux\.com/i', 'dav.fruux.com', $sUrl);
@@ -325,12 +325,21 @@ trait CardDAV
 
 		$this->logMask($sPassword);
 
+		$sRefusal = static::davUrlRefusal($aSettings['baseUri'], $this->davAllowedHosts());
+		if (null !== $sRefusal) {
+			$this->logWrite("DavClient refused {$aSettings['baseUri']}: {$sRefusal}", \LOG_WARNING, 'DAV');
+			return null;
+		}
+		$aSettings['allowPrivateHosts'] = static::davHostIsListed($aSettings['baseUri'], $this->davAllowedHosts());
+
 		if (!empty($sProxy)) {
 			$aSettings['proxy'] = $sProxy;
 		}
 
 		$oClient = new DAVClient($aSettings);
-		$oClient->setVerifyPeer(false);
+		// S-06: was setVerifyPeer(false), unconditionally. The password goes out
+		// in Basic: an unverified certificate hands it to whoever sits on the path.
+		$oClient->setVerifyPeer(true);
 
 		$oClient->urlPath = $aUrl['path'];
 
@@ -360,6 +369,9 @@ trait CardDAV
 		}
 
 		$oClient = $this->getDavClientFromUrl($sUrl, $sUser, $sPassword, $sProxy);
+		if (!$oClient) {
+			return null;
+		}
 
 		$sPath = $oClient->urlPath;
 
@@ -410,6 +422,58 @@ trait CardDAV
 		}
 
 		return $bGood ? $oClient : null;
+	}
+
+	/**
+	 * Hosts the administrator vouches for ([contacts] sync_allowed_hosts,
+	 * comma-separated, "host" or "host:port"). They may resolve to an
+	 * internal address - the suite's own Cyrus does (pim.convergent.cc is an
+	 * address of this host, smail-local.convergent.cc is 127.0.0.1).
+	 */
+	protected function davAllowedHosts() : array
+	{
+		$sList = (string) \RainLoop\Api::Config()->Get('contacts', 'sync_allowed_hosts', '');
+		return \array_values(\array_filter(\array_map(
+			fn($s) => \strtolower(\trim($s)), \explode(',', $sList)
+		), 'strlen'));
+	}
+
+	/**
+	 * Whether the base URI's host (with or without its port) is on the
+	 * administrator's list. Exact match only: no suffix, no wildcard.
+	 */
+	public static function davHostIsListed(string $sBaseUri, array $aAllowed) : bool
+	{
+		$sHost = \strtolower((string) \parse_url($sBaseUri, PHP_URL_HOST));
+		$iPort = (int) \parse_url($sBaseUri, PHP_URL_PORT);
+		return '' !== $sHost && (\in_array($sHost, $aAllowed, true)
+			|| ($iPort && \in_array("{$sHost}:{$iPort}", $aAllowed, true)));
+	}
+
+	/**
+	 * Why a DAV base URI may not be contacted, or null when it may.
+	 * WHY (S-06): a user-saved sync URL, or an href a remote server answers,
+	 * made this server send PROPFIND/GET/PUT/DELETE with stored credentials
+	 * to any host:port, internal ones included, over plain http or
+	 * unverified TLS. Fail closed: https only, and a host outside the
+	 * administrator's list must resolve to public addresses only (checked
+	 * again and pinned at connect time by the HTTP client).
+	 */
+	public static function davUrlRefusal(string $sBaseUri, array $aAllowed) : ?string
+	{
+		if ('https' !== \strtolower((string) \parse_url($sBaseUri, PHP_URL_SCHEME))) {
+			return 'only https:// is allowed';
+		}
+		if (!\is_string(\parse_url($sBaseUri, PHP_URL_HOST)) || \preg_match('/[@\\s]/', $sBaseUri)) {
+			return 'malformed URL';
+		}
+		if (static::davHostIsListed($sBaseUri, $aAllowed)) {
+			return null;
+		}
+		if (!\SnappyMail\HTTP\Request::URIHasPublicHost($sBaseUri)) {
+			return 'host is not a public address (add it to [contacts] sync_allowed_hosts if it is yours)';
+		}
+		return null;
 	}
 
 	private static function hasDAVCollection($aItem)

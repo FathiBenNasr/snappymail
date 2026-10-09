@@ -49,13 +49,19 @@ trait Contacts
 
 		$mData = $this->getContactsSyncData($oAccount);
 
+		$sUrl = (string) $this->GetActionParam('Url', '');
+		// WHY (S-06): the placeholder keeps the stored password. Kept for a
+		// new URL, it would be sent to whatever host the new URL names.
+		$bKeepPassword = static::APP_DUMMY === $sPassword
+			&& isset($mData['Url']) && $sUrl === $mData['Url'];
+
 		$bResult = $this->setContactsSyncData($oAccount, array(
 			'Mode' => \intval($this->GetActionParam('Mode', '0')),
 			'User' => $this->GetActionParam('User', ''),
 			'Password' => static::APP_DUMMY === $sPassword
-				? (isset($mData['Password']) ? $mData['Password'] : '')
+				? ($bKeepPassword && isset($mData['Password']) ? $mData['Password'] : '')
 				: $sPassword,
-			'Url' => $this->GetActionParam('Url', '')
+			'Url' => $sUrl
 		));
 
 		return $this->DefaultResponse($bResult);
