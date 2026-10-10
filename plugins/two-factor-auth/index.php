@@ -10,7 +10,7 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 {
 	const
 		NAME     = 'Two Factor Authentication',
-		VERSION  = '2.26.0',
+		VERSION  = '2.27.0',
 		RELEASE  = '2026-10-10',
 		REQUIRED = '2.36.0',
 		CATEGORY = 'Login',
@@ -18,7 +18,36 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 		// The additional message of the refusal when the code is missing.
 		CODE_REQUIRED = 'TwoFactorCodeRequired',
 		// The additional message when a protected account is refused as an additional one.
-		NOT_ADDITIONAL = 'TwoFactorNotAdditional';
+		NOT_ADDITIONAL = 'TwoFactorNotAdditional',
+		// The additional message of every request refused while an account
+		// that must set up the second factor has not (2.27.0).
+		SETUP_REQUIRED = 'TwoFactorSetupRequired',
+		/**
+		 * What an account that must enrol may still call, measured on
+		 * banc-smail on 10 October 2026 (tests/browser/forcer.js, MESURE=1):
+		 * the boot of the application, the settings screen, creating the
+		 * secret, testing the code, enabling, logging out.
+		 *  - DoFolders: the boot calls it, and on a refusal the application
+		 *    logs out and says "Folders error" — the screen that enrols would
+		 *    never be reached. It gives folder names and counters, no message.
+		 *  - DoPluginShowTwoFactorSecret and DoPluginClearTwoFactorInfo: two
+		 *    links of the same screen ("show the secret", "clear"), for whoever
+		 *    lost the QR code before testing it.
+		 * Everything else the boot calls (AccountsAndIdentities, SettingsUpdate,
+		 * other plugins) is refused, and the screen still enrols.
+		 */
+		SETUP_ALLOWED_ACTIONS = 'DoFolders DoLogout DoPluginGetTwoFactorInfo DoPluginCreateTwoFactorSecret'
+			. ' DoPluginShowTwoFactorSecret DoPluginVerifyTwoFactorCode DoPluginEnableTwoFactor DoPluginClearTwoFactorInfo',
+		/**
+		 * The services (first segment of ?/<Service>/...) such an account may
+		 * reach. Measured: AppData, Plugins, Json. Css and Lang serve code,
+		 * not data, and the settings screens that stay reachable switch theme
+		 * and language through them; Raw and Json are then filtered action by
+		 * action. Everything else — Upload, ProxyExternal, the parts of other
+		 * plugins (calendar export, files) — never reaches filter.action-params,
+		 * so it is refused here, whole.
+		 */
+		SETUP_ALLOWED_SERVICES = 'AppData Plugins Json Raw Css Lang Ping';
 
 	public function Init() : void
 	{
@@ -32,6 +61,11 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 		// goes through filter.account alone, at setup and on every request.
 		$this->addHook('filter.account', 'FilterAccount');
 		$this->addHook('filter.app-data', 'FilterAppData');
+		// 2.27.0: "enforce" held by the server, not only by the redirect of
+		// TwoFactorAuthLogin.js — a session could call the API directly.
+		$this->addHook('filter.action-params', 'FilterActionParams');
+		$this->addHook('filter.http-paths', 'FilterHttpPaths');
+		$this->addPartHook(self::SETUP_REQUIRED, 'ServiceSetupRequired');
 
 		$this->addJsonHook('GetTwoFactorInfo', 'DoGetTwoFactorInfo');
 		$this->addJsonHook('CreateTwoFactorSecret', 'DoCreateTwoFactorSecret');
@@ -55,6 +89,16 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 				->SetLabel('Enforce 2-Step Verification for these domains')
 				->SetType(\RainLoop\Enumerations\PluginPropertyType::STRING_TEXT)
 				->SetDescription('One domain per line (or separated by commas or spaces). Accounts of these domains must set up 2-Step Verification, as with the switch above, which applies to everyone. Empty: nobody but what the switch above says.')
+				->SetDefaultValue(''),
+			\RainLoop\Plugins\Property::NewInstance("setup_allowed_actions")
+				->SetLabel('Allowed until 2-Step Verification is set up: actions')
+				->SetType(\RainLoop\Enumerations\PluginPropertyType::STRING_TEXT)
+				->SetDescription('While an account that must set up 2-Step Verification has not, the server refuses every action not listed here (method names: DoX for ?/Json, DoPluginX for a plugin action, RawX for ?/Raw). Empty: the measured default, ' . self::SETUP_ALLOWED_ACTIONS . '.')
+				->SetDefaultValue(''),
+			\RainLoop\Plugins\Property::NewInstance("setup_allowed_services")
+				->SetLabel('Allowed until 2-Step Verification is set up: services')
+				->SetType(\RainLoop\Enumerations\PluginPropertyType::STRING_TEXT)
+				->SetDescription('The same, for the first segment of the address (?/Service/...). Json and Raw are then filtered action by action. Empty: ' . self::SETUP_ALLOWED_SERVICES . '.')
 				->SetDefaultValue(''),
 			\RainLoop\Plugins\Property::NewInstance("otp_issuer")
 				->SetLabel('Service name shown in the authenticator')
@@ -127,6 +171,169 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 		$sDomain = \strtolower(\substr($sEmail, $iAt + 1));
 		return \in_array($sDomain,
 			static::parseDomains((string) $this->Config()->Get('plugin', 'force_two_factor_domains', '')), true);
+	}
+
+	/**
+	 * Every action of an account that must set up the second factor and has
+	 * not is refused, except the allowed ones (2.27.0, CDU-10 / S-76).
+	 *
+	 * Until 2.26.0 the rule was a redirect in the browser: the session of such
+	 * an account read mail through ?/Json and ?/Raw like any other. The core
+	 * runs this hook for every ?/Json action — FilterHttpPaths below closes
+	 * the one GET form it skips — and every ?/Raw one, before the action.
+	 * Fail closed: an action not in the list is refused, and a record that
+	 * cannot be read counts as "not set up".
+	 */
+	public function FilterActionParams($sMethodName, $aParams = null) : void
+	{
+		$sMethodName = (string) $sMethodName;
+		if ($this->setupAllows('setup_allowed_actions', self::SETUP_ALLOWED_ACTIONS, $sMethodName)
+		 || !$this->setupRequired()) {
+			return;
+		}
+		$this->Logger()->Write("TFA: {$sMethodName} refused, 2-Step Verification must be set up first");
+		throw new ClientException(\RainLoop\Notifications::ClientViewError, null, self::SETUP_REQUIRED);
+	}
+
+	/**
+	 * The two paths filter.action-params does not see (2.27.0).
+	 *
+	 * 1. A GET ?/Json/&q[]=/0/<Action> with nothing after the action: the
+	 *    core takes the action from the path but calls SetActionParams only
+	 *    when a fourth segment exists — so Folders, Contacts... answered
+	 *    without the hook, and without a token (no CSRF check on GET). An
+	 *    empty fourth segment makes the core call it; the action reads no
+	 *    parameter from it (RawKey '' is "none").
+	 * 2. Any other service: Upload*, ProxyExternal, the parts of other
+	 *    plugins. Not allowed: sent to ServiceSetupRequired, which refuses.
+	 *
+	 * Nothing changes for an account that is not required to enrol, nor for
+	 * the admin panel, nor before login.
+	 */
+	public function FilterHttpPaths(&$aPaths) : void
+	{
+		if (!\is_array($aPaths) || empty($aPaths[0])) {
+			return;
+		}
+		$sService = \strtolower(\preg_replace('/@.*$/', '', (string) $aPaths[0]));
+		if ('' === $sService || 'index' === $sService || \strtolower(self::SETUP_REQUIRED) === $sService) {
+			return;
+		}
+		if ($this->setupAllows('setup_allowed_services', self::SETUP_ALLOWED_SERVICES, $sService)) {
+			if ('json' === $sService && 3 === \count($aPaths) && '' !== (string) $aPaths[2]
+			 && !$this->setupAllows('setup_allowed_actions', self::SETUP_ALLOWED_ACTIONS, 'Do' . $aPaths[2])
+			 && $this->setupRequired()) {
+				$aPaths[] = '';
+			}
+			return;
+		}
+		if ($this->servesSomething($sService) && $this->setupRequired()) {
+			$this->Logger()->Write("TFA: service {$aPaths[0]} refused, 2-Step Verification must be set up first");
+			$aPaths = array(self::SETUP_REQUIRED);
+		}
+	}
+
+	/**
+	 * Whether the core would answer this first segment with something other
+	 * than the application page: a ServiceActions method or a plugin part.
+	 * Anything else (?lang=fr, a typo) gets the page, as before 2.27.0. The
+	 * parts are a private list of the plugin manager: when it cannot be read,
+	 * the answer is yes — refused rather than served.
+	 */
+	protected function servesSomething(string $sService) : bool
+	{
+		if (\method_exists(\RainLoop\ServiceActions::class, 'Service' . $sService)) {
+			return true;
+		}
+		try {
+			$oManager = $this->Manager();
+			return (bool) \Closure::bind(fn () => isset($this->aAdditionalParts[$sService]),
+				$oManager, \get_class($oManager))();
+		} catch (\Throwable $oError) {
+			return true;
+		}
+	}
+
+	/** The answer of a refused service: the shape of a refused ?/Json action. */
+	public function ServiceSetupRequired() : bool
+	{
+		if (!\headers_sent()) {
+			\MailSo\Base\Http::StatusHeader(403);
+			\header('Content-Type: application/json; charset=utf-8');
+		}
+		echo \json_encode(array(
+			'Action' => self::SETUP_REQUIRED,
+			'Result' => false,
+			'code' => \RainLoop\Notifications::ClientViewError,
+			'message' => '',
+			'messageAdditional' => self::SETUP_REQUIRED
+		));
+		return true;
+	}
+
+	/** Whether $sName is in the configured list, or in the default when it is empty. Case-insensitive, as PHP method names. */
+	protected function setupAllows(string $sKey, string $sDefault, string $sName) : bool
+	{
+		$sList = \trim((string) $this->Config()->Get('plugin', $sKey, ''));
+		$aList = \preg_split('/[\s,;]+/', \strtolower('' === $sList ? $sDefault : $sList), -1, PREG_SPLIT_NO_EMPTY);
+		return '' !== $sName && \in_array(\strtolower($sName), $aList, true);
+	}
+
+	/**
+	 * Logged in (not the admin panel), required to enrol — global switch or a
+	 * listed domain — and without a second factor switched on. Not cached: the
+	 * same request can be the one that enables it.
+	 */
+	protected function setupRequired() : bool
+	{
+		$oActions = $this->Manager()->Actions();
+		if ($oActions instanceof \RainLoop\ActionsAdmin) {
+			return false;
+		}
+		$bGlobal = (bool) $this->Config()->Get('plugin', 'force_two_factor_auth', false);
+		if (!$bGlobal && !static::parseDomains((string) $this->Config()->Get('plugin', 'force_two_factor_domains', ''))) {
+			// Nobody is required: the session is not even looked at.
+			return false;
+		}
+		$oAccount = $this->currentMainAccount();
+		if (!$oAccount || (!$bGlobal && !$this->forcedFor($oAccount->Email()))) {
+			return false;
+		}
+		try {
+			$aRecord = $this->loadRecord($oAccount);
+		} catch (\Throwable $oError) {
+			$this->Logger()->Write("TFA: record of {$oAccount->Email()} unreadable, counted as not set up");
+			return true;
+		}
+		return !$aRecord || empty($aRecord['Enable']);
+	}
+
+	/**
+	 * The main account of the session, or null before login.
+	 *
+	 * Asked without exceptions; but the core then keeps "no account" for the
+	 * rest of the request, and the action that follows would no longer throw
+	 * its own InvalidToken ("session gone") — which is what sends the browser
+	 * back to the login screen. The core is left as it was found.
+	 */
+	protected function currentMainAccount() : ?MainAccount
+	{
+		$oActions = $this->Manager()->Actions();
+		try {
+			$oAccount = $oActions->getMainAccountFromToken(false);
+		} catch (\Throwable $oError) {
+			$oAccount = null;
+		}
+		if (!$oAccount) {
+			try {
+				// Bound to the class that declares the property (UserAuth, a trait of Actions).
+				\Closure::bind(function () {
+					\property_exists($this, 'oMainAuthAccount') && $this->oMainAuthAccount = false;
+				}, $oActions, \RainLoop\Actions::class)();
+			} catch (\Throwable $oError) {
+			}
+		}
+		return $oAccount instanceof MainAccount ? $oAccount : null;
 	}
 
 	/**

@@ -1,6 +1,6 @@
 <?php
 /**
- * two-factor-auth 2.25.0 — the actions, through the real plugin class, with
+ * two-factor-auth 2.27.0 — the actions, through the real plugin class, with
  * the core reduced to what the plugin touches.
  *
  * Run: php plugins/two-factor-auth/tests/ActionsTest.php (from the snappymail tree)
@@ -10,7 +10,34 @@ declare(strict_types=1);
 namespace RainLoop\Exceptions { class ClientException extends \Exception {
 	public function __construct(int $iCode = 0, ?\Throwable $oPrevious = null, private string $sAdditional = '') { parent::__construct('', $iCode, $oPrevious); }
 	public function getAdditionalMessage() : string { return $this->sAdditional; } } }
-namespace RainLoop { class Notifications { const AuthError = 102; }
+namespace RainLoop { class Notifications { const InvalidToken = 101; const AuthError = 102; const ConnectionError = 104; const DomainNotAllowed = 109;
+		const AccountNotAllowed = 110; const MailServerError = 901; const ClientViewError = 902; const UnknownError = 999; }
+	// The tranche of the core's Actions the plugin touches. The session is
+	// resolved once per request, as in UserAuth::getMainAccountFromToken():
+	// asked without exceptions and absent, it stays null — and a later strict
+	// call then returns null instead of throwing "Account undefined".
+	class Actions {
+		private $oMainAuthAccount = false;
+		public ?\RainLoop\Model\MainAccount $session = null;
+		public int $resolved = 0;
+		public $p = null;
+		public function getMainAccountFromToken(bool $bThrow = true) {
+			if (false === $this->oMainAuthAccount) {
+				++$this->resolved;
+				$this->oMainAuthAccount = $this->session;
+				if (!$this->session && $bThrow) { throw new \RainLoop\Exceptions\ClientException(Notifications::InvalidToken, null, 'Account undefined'); }
+			}
+			return $this->oMainAuthAccount;
+		}
+		public function state() { return $this->oMainAuthAccount; }
+		public function HasActionParam($k) { return false; }
+		public function SetAdditionalAuthToken($a) { $this->p && ++$this->p->additionalCleared; }
+	}
+	class ActionsAdmin extends Actions {}
+	// The services of the core, by name only.
+	class ServiceActions { public function ServiceJson() {} public function ServiceRaw() {} public function ServiceAppData() {} public function ServicePlugins() {}
+		public function ServiceCss() {} public function ServiceLang() {} public function ServiceUpload() {} public function ServiceUploadContacts() {}
+		public function ServiceUploadBackground() {} public function ServiceProxyExternal() {} public function ServiceMailto() {} }
 	class Api { public static function Config() { return new class { public function Get($a, $b, $c = null) { return 'smail.tn'; } }; } } }
 namespace RainLoop\Model { abstract class Account { public function __construct(private string $e) {} public function Email() : string { return $this->e; } }
 	class MainAccount extends Account {} class AdditionalAccount extends Account {} }
@@ -26,6 +53,7 @@ namespace RainLoop\Plugins {
 		public function addJs($f) : void {}
 		public function addHook($a, $b) : void {}
 		public function addJsonHook($a, $b) : void {}
+		public function addPartHook($a, $b) : void {}
 		public function addTemplate($f) : void {}
 		public function jsonParam(string $k, $d = null) { return $this->params[$k] ?? $d; }
 		public function jsonResponse(string $f, $m) : array { return array('Result' => $m); }
@@ -45,10 +73,11 @@ namespace {
 	final class Storage
 	{
 		public array $data = array();
+		public bool $broken = false;
 		public string $root;
 		public function __construct() { $this->root = \sys_get_temp_dir() . '/tfa-test-' . \getmypid() . '-' . \bin2hex(\random_bytes(4)); }
 		private static function id($a) : string { return \is_string($a) ? $a : $a->Email(); }
-		public function Get($a, $t, $k) { return $this->data[self::id($a)] ?? ''; }
+		public function Get($a, $t, $k) { if ($this->broken) { throw new \RuntimeException('storage down'); } return $this->data[self::id($a)] ?? ''; }
 		public function Put($a, $t, $k, $v) : bool { $this->data[self::id($a)] = $v; return true; }
 		public function Clear($a, $t, $k) : bool { unset($this->data[self::id($a)]); return true; }
 		public function GenerateFilePath($a, $t, $b = false) : string {
@@ -65,7 +94,15 @@ namespace {
 		public array $log = array();
 		public int $authFailures = 0;
 		public int $additionalCleared = 0;
-		public function __construct() { $this->oStore = new Storage(); $this->oAccount = new \RainLoop\Model\MainAccount('rym@smail.tn'); }
+		public \RainLoop\Actions $actions;
+		public function __construct() { $this->oStore = new Storage(); $this->oAccount = new \RainLoop\Model\MainAccount('rym@smail.tn'); $this->request(); }
+		/** A new request: the core resolves the session again. */
+		public function request(?string $sSession = 'same', bool $bAdmin = false) : \RainLoop\Actions {
+			$this->actions = $bAdmin ? new \RainLoop\ActionsAdmin() : new \RainLoop\Actions();
+			$this->actions->p = $this;
+			$this->actions->session = 'same' === $sSession ? $this->oAccount : (null === $sSession ? null : new \RainLoop\Model\MainAccount($sSession));
+			return $this->actions;
+		}
 		public function check(string $sCode, array $aStale) : string { return $this->checkCode($this->oAccount, $aStale, $sCode); }
 		public function stored() : array { return $this->loadRecord($this->oAccount); }
 		public function lockFile() : string { return $this->lockPath($this->oAccount); }
@@ -74,12 +111,13 @@ namespace {
 		protected function getMainAccountFromToken() : \RainLoop\Model\MainAccount { return $this->oAccount; }
 		protected function StorageProvider() : \RainLoop\Providers\Storage { return new \RainLoop\Providers\Storage($this->oStore); }
 		protected function logAuthFailure(\RainLoop\Model\MainAccount $o, string $s) : void { ++$this->authFailures; }
-		public function Manager() { $p = $this; return new class ($p) { public function __construct(private $p) {} public function Actions() { $p = $this->p; return new class ($p) {
-			public function __construct(private $p) {}
-			public function HasActionParam($k) { return false; }
-			public function SetAdditionalAuthToken($a) { ++$this->p->additionalCleared; } }; } }; }
+		public function Manager() { $p = $this; return new class ($p) {
+			// Private, as in Plugins\Manager: the parts other plugins registered (caldav, files).
+			private array $aAdditionalParts = array('caldavexport' => array(), 'files' => array(), 'twofactorsetuprequired' => array());
+			public function __construct(private $p) {} public function Actions() { return $this->p->actions; } }; }
 	}
 }
+namespace MailSo\Base { class Http { public static function StatusHeader(int $i) : void {} } }
 namespace MailSo\Log { class Logger { public function __construct(private $p) {} public function Write($m) { $this->p->log[] = $m; } } }
 namespace RainLoop\Providers { class Storage { public function __construct(private $s) {}
 	public function Get($a, $t, $k) { return $this->s->Get($a, $t, $k); }
@@ -252,8 +290,117 @@ namespace {
 	@\unlink("$sRoot-ro.conf");
 	@\unlink("$sRoot/smail.tn/rym.json"); @\rmdir("$sRoot/smail.tn"); @\rmdir($sRoot); @\unlink("$sRoot.conf");
 
+	/* ---- 2.27.0: "enforce" held by the server (CDU-10 / S-76) ---- */
+	// What the core does: SetActionParams() runs filter.action-params with the
+	// method name before the action; Service::Handle() runs filter.http-paths.
+	$verdict = function (P $x, string $sMethod) : string {
+		try { $x->FilterActionParams($sMethod, array()); return 'passe'; }
+		catch (\RainLoop\Exceptions\ClientException $e) { return $e->getAdditionalMessage() . '/' . $e->getCode(); }
+	};
+	$chemin = function (P $x, array $aPaths) : array { $x->FilterHttpPaths($aPaths); return $aPaths; };
+	$enroler = function (P $x) use ($previous) {
+		$c = $x->DoCreateTwoFactorSecret()['Result'];
+		$x->params = array('Code' => $previous($c['Secret'])); $x->DoVerifyTwoFactorCode();
+		$x->params = array('Enable' => '1'); return $x->DoEnableTwoFactor()['Result'];
+	};
+	$REFUS = 'TwoFactorSetupRequired/' . \RainLoop\Notifications::ClientViewError;
+
+	$g = new P();
+	$g->config = array('force_two_factor_domains' => 'smail.tn');
+	foreach (array('DoMessageList', 'DoMessage', 'DoSendMessage', 'RawDownload', 'RawView', 'DoAccountsAndIdentities', 'DoContacts', 'DoPluginEpingleListe') as $m) {
+		$g->request();
+		$check("required, not set up: $m is refused, and named", $verdict($g, $m), $REFUS);
+	}
+	$check('the refusal does not count toward the client\'s logout-after-7-errors (code ' . \RainLoop\Notifications::ClientViewError . ')',
+		\in_array(\RainLoop\Notifications::ClientViewError, array(\RainLoop\Notifications::AuthError, \RainLoop\Notifications::ConnectionError,
+			\RainLoop\Notifications::DomainNotAllowed, \RainLoop\Notifications::AccountNotAllowed, \RainLoop\Notifications::MailServerError,
+			\RainLoop\Notifications::UnknownError, \RainLoop\Notifications::InvalidToken), true), false);
+	foreach (\preg_split('/\s+/', TwoFactorAuthPlugin::SETUP_ALLOWED_ACTIONS) as $m) {
+		$g->request();
+		$check("required, not set up: $m (measured allow-list) passes", $verdict($g, $m), 'passe');
+	}
+	$check('the allow-list is case-insensitive, as PHP method names (dologout runs DoLogout)', $verdict($g, 'dologout'), 'passe');
+	$check('the allow-list holds no mail action', \preg_match('/Message|Send|Raw|Contacts|Identit/i', TwoFactorAuthPlugin::SETUP_ALLOWED_ACTIONS), 0);
+
+	// The GET the core skips: three segments, no SetActionParams, no token.
+	$check('GET ?/Json/…/AccountsAndIdentities with three segments: a fourth is added, so the hook runs',
+		$chemin($g, array('Json', '0', 'AccountsAndIdentities')), array('Json', '0', 'AccountsAndIdentities', ''));
+	$check('… also written json@x, which the core reads as Json',
+		\count($chemin($g, array('json@x', '0', 'Contacts'))), 4);
+	$check('… but not for an allowed action (Folders)', $chemin($g, array('Json', '0', 'Folders')), array('Json', '0', 'Folders'));
+	$check('… nor for a POST (no action in the path)', $chemin($g, array('Json', '0', '')), array('Json', '0', ''));
+	foreach (array(array('Upload', '0'), array('UploadContacts', '0'), array('UploadBackground'), array('ProxyExternal', 'aHR0cA'),
+		array('CalDavExport', 'x'), array('Files', 'x'), array('Mailto')) as $aP) {
+		$check("required, not set up: service {$aP[0]} is refused whole", $chemin($g, $aP), array('TwoFactorSetupRequired'));
+	}
+	$check('a first segment nothing answers (?lang=fr) still gets the page, as before', $chemin($g, array('lang=fr')), array('lang=fr'));
+	$check('… nor a name no service nor part bears', $chemin($g, array('Nimporte', 'x')), array('Nimporte', 'x'));
+	foreach (array(array('AppData', '0', '1'), array('Plugins', '0', 'User', 'h'), array('Raw', '0', 'Download', 'k'), array('Css', '0'), array('Lang', '0', 'App', 'fr'), array(''), array('index')) as $aP) {
+		$check("required, not set up: service " . ($aP[0] ?: '(index)') . ' is left to the action filter', $chemin($g, $aP), $aP);
+	}
+	\ob_start(); $bServi = $g->ServiceSetupRequired(); $sCorps = (string) \ob_get_clean();
+	$aCorps = \json_decode($sCorps, true);
+	$check('the refused service answers like a refused action, named', array($bServi, $aCorps['Result'], $aCorps['messageAdditional']), array(true, false, 'TwoFactorSetupRequired'));
+
+	// Fail closed: a record that cannot be read is "not set up".
+	$g->oStore->broken = true; $g->request();
+	$check('the record cannot be read: refused (fail closed)', $verdict($g, 'DoMessageList'), $REFUS);
+	$g->oStore->broken = false;
+
+	// Enrolled in this very request: nothing is cached, the next action passes.
+	$g->request();
+	$check('enrolled through the allowed actions', $enroler($g), true);
+	foreach (array('DoMessageList', 'DoMessage', 'DoSendMessage', 'RawDownload') as $m) {
+		$check("enrolled: $m passes", $verdict($g, $m), 'passe');
+	}
+	$check('enrolled: Upload is left alone', $chemin($g, array('Upload', '0')), array('Upload', '0'));
+	$check('enrolled: the GET is left alone', $chemin($g, array('Json', '0', 'AccountsAndIdentities')), array('Json', '0', 'AccountsAndIdentities'));
+	$g->params = array('Code' => $current($g->stored() ? TwoFactorRecord::unseal((string) $g->stored()['SecretBox'], TwoFactorRecord::key(APP_SALT)) : ''));
+	$g->DoClearTwoFactorInfo();
+	$check('cleared again in the same session: refused again', $verdict($g, 'DoMessageList'), $REFUS);
+
+	// Not required: nothing refused, and the session is not even looked at.
+	$h = new P();
+	foreach (array('DoMessageList', 'DoSendMessage', 'RawDownload') as $m) {
+		$check("nobody required: $m passes", $verdict($h, $m), 'passe');
+	}
+	$check('nobody required: Upload is left alone', $chemin($h, array('Upload', '0')), array('Upload', '0'));
+	$check('nobody required: the session was never resolved by the plugin', $h->actions->resolved, 0);
+	$h->config = array('force_two_factor_domains' => 'smail.tn');
+	$h->request('rym@ailleurs.tn');
+	$check('a domain not listed: MessageList passes', $verdict($h, 'DoMessageList'), 'passe');
+	$check('a domain not listed: Upload is left alone', $chemin($h, array('Upload', '0')), array('Upload', '0'));
+	$h->config = array('force_two_factor_auth' => true);
+	$h->request('rym@ailleurs.tn');
+	$check('the global switch: any domain is refused', $verdict($h, 'DoMessageList'), $REFUS);
+
+	// The admin panel: ActionsAdmin, never filtered.
+	$h->request('same', true);
+	$check('admin panel: AdminSettingsGet passes', $verdict($h, 'DoAdminSettingsGet'), 'passe');
+	$check('admin panel: MessageList is not this plugin\'s business either', $verdict($h, 'DoMessageList'), 'passe');
+	$check('admin panel: its paths are left alone', $chemin($h, array('Upload', '0')), array('Upload', '0'));
+	$check('admin panel: the user session is not even resolved', $h->actions->resolved, 0);
+
+	// Before login: nothing to refuse, and the core is left as found, so the
+	// action still meets its own "Account undefined" — which sends the browser to the login screen.
+	$oSans = $h->request(null);
+	$check('before login: Login passes', $verdict($h, 'DoLogin'), 'passe');
+	$check('before login: MessageList is left to the core', $verdict($h, 'DoMessageList'), 'passe');
+	$check('before login: the core\'s session state is put back (false, not null)', $oSans->state(), false);
+	try { $oSans->getMainAccountFromToken(true); $check('before login: the action still throws InvalidToken', 'no exception', 'InvalidToken'); }
+	catch (\RainLoop\Exceptions\ClientException $e) { $check('before login: the action still throws InvalidToken', $e->getCode(), \RainLoop\Notifications::InvalidToken); }
+
+	// Configurable: the lists are the administrator's, the measured ones the default.
+	$k = new P();
+	$k->config = array('force_two_factor_domains' => 'smail.tn', 'setup_allowed_actions' => "DoLogout\nDoPluginGetTwoFactorInfo", 'setup_allowed_services' => 'AppData, Plugins, Json');
+	$check('configured actions: DoLogout passes', $verdict($k, 'DoLogout'), 'passe');
+	$check('configured actions: DoFolders, not listed, is refused', $verdict($k, 'DoFolders'), $REFUS);
+	$check('configured services: Raw, not listed, is refused whole', $chemin($k, array('Raw', '0', 'Download', 'k')), array('TwoFactorSetupRequired'));
+	$k->config['setup_allowed_actions'] = '  ';
+	$check('an empty list is the measured default (DoFolders passes)', $verdict($k, 'DoFolders'), 'passe');
+
 	// The temporary storage of every double.
-	foreach (array($p, $r, $t, $a, $n, $q, $o, $w, $f) as $x) { \is_dir($x->oStore->root) && \exec('rm -rf ' . \escapeshellarg($x->oStore->root)); }
+	foreach (array($p, $r, $t, $a, $n, $q, $o, $w, $f, $g, $h, $k) as $x) { \is_dir($x->oStore->root) && \exec('rm -rf ' . \escapeshellarg($x->oStore->root)); }
 
 	echo "\n", $iFail ? "$iFail failed\n" : "0 failed\n";
 	exit($iFail ? 1 : 0);

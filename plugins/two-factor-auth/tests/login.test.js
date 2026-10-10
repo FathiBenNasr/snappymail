@@ -51,3 +51,47 @@ test('connexion réussie : rien n\'est touché', () => {
 	c.repondre({ error: 0, data: { Result: {} } });
 	assert.strictEqual(c.vue.erreur, '');
 });
+
+// 2.27.0: once enrolled, leaving the settings reloads the application once —
+// the server had refused what the mailbox loads at boot.
+function ecran(reglages) {
+	const ecoute = {};
+	let recharge = 0;
+	const bac = {
+		addEventListener: (n, f) => { ecoute[n] = f; },
+		setTimeout: f => f(),
+		Element: { fromHTML: () => ({}) },
+		document: { location: { hash: '', reload: () => ++recharge } },
+		window: {}
+	};
+	bac.window.rl = { settings: { get: k => reglages[k] }, i18n: k => k };
+	vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../js/TwoFactorAuthLogin.js'), 'utf8'), bac);
+	const aller = cible => { let annule = false; ecoute['sm-show-screen']({ detail: cible, preventDefault: () => { annule = true; } }); return annule; };
+	return { aller, recharge: () => recharge, location: bac.document.location };
+}
+
+test('2.27.0: forced, the mailbox is refused and the settings screen is opened', () => {
+	const e = ecran({ SetupTwoFactor: true });
+	assert.strictEqual(e.aller('mailbox/INBOX'), true);
+	assert.strictEqual(e.location.hash, '#/settings/two-factor-auth');
+	assert.strictEqual(e.aller('settings/two-factor-auth'), false);
+	assert.strictEqual(e.recharge(), 0);
+});
+
+test('2.27.0: enrolled in this page, leaving the settings reloads; staying in them does not', () => {
+	const reglages = { SetupTwoFactor: true };
+	const e = ecran(reglages);
+	e.aller('mailbox/INBOX');
+	reglages.SetupTwoFactor = false;
+	assert.strictEqual(e.aller('settings/general'), false);
+	assert.strictEqual(e.recharge(), 0);
+	assert.strictEqual(e.aller('mailbox/INBOX'), true);
+	assert.strictEqual(e.recharge(), 1);
+});
+
+test('2.27.0: never forced in this page, nothing is reloaded nor refused', () => {
+	const e = ecran({ SetupTwoFactor: false });
+	assert.strictEqual(e.aller('mailbox/INBOX'), false);
+	assert.strictEqual(e.aller('settings/general'), false);
+	assert.strictEqual(e.recharge(), 0);
+});

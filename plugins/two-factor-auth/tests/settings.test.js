@@ -36,3 +36,56 @@ test('S-09: the note is shown where it is enforced, and re-read when the screen 
 	v.onShow();
 	assert.strictEqual(v.appPasswordsNote(), false);
 });
+
+// 2.27.0: the server refuses everything until the second factor is on, so the
+// screen's idea of "forced" must follow what the server answered.
+function vueAvecServeur(reglages) {
+	const appels = [];
+	const observable = v => { const o = n => (undefined === n ? v : (v = n)); return o; };
+	let Vue = null;
+	const rl = {
+		settings: { get: k => reglages[k], set: (k, v) => { reglages[k] = v; } },
+		i18n: k => k,
+		pluginRemoteRequest: (cb, action, prm) => appels.push({ cb, action, prm }),
+		pluginPopupView: class {},
+		addSettingsViewModel: c => { Vue = c; }
+	};
+	vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../js/TwoFactorAuthSettings.js'), 'utf8'),
+		{ window: { rl }, ko: { observable, computed: f => f, decorateCommands: () => {} } });
+	return { v: new Vue(), appels };
+}
+
+test('2.27.0: enabled for real, the screen stops forcing', () => {
+	const reglages = { RequireTwoFactor: true, SetupTwoFactor: true };
+	const { v, appels } = vueAvecServeur(reglages);
+	v.twoFactorTested(true);
+	v.viewEnable.write(true);
+	assert.strictEqual(appels[0].action, 'EnableTwoFactor');
+	appels[0].cb(0, { Result: true });
+	assert.strictEqual(reglages.SetupTwoFactor, false);
+});
+
+test('2.27.0: a refusal without an error code (Result false) is not "enabled"', () => {
+	const reglages = { RequireTwoFactor: true, SetupTwoFactor: true };
+	const { v, appels } = vueAvecServeur(reglages);
+	v.twoFactorTested(true);
+	v.viewEnable.write(true);
+	appels[0].cb(0, { Result: false });
+	assert.strictEqual(reglages.SetupTwoFactor, true);
+	assert.strictEqual(v.viewEnable_(), false);
+});
+
+test('2.27.0: cleared again, the screen forces again; not required, nothing is forced', () => {
+	const reglages = { RequireTwoFactor: true, SetupTwoFactor: false };
+	const { v, appels } = vueAvecServeur(reglages);
+	v.clearTwoFactor();
+	assert.strictEqual(appels[0].action, 'ClearTwoFactorInfo');
+	appels[0].cb(0, { Result: { User: 'a@smail.tn', IsSet: false, Enable: false, Tested: false } });
+	assert.strictEqual(reglages.SetupTwoFactor, true);
+
+	const libre = { RequireTwoFactor: false, SetupTwoFactor: false };
+	const b = vueAvecServeur(libre);
+	b.v.clearTwoFactor();
+	b.appels[0].cb(0, { Result: { User: 'a@smail.tn', IsSet: false, Enable: false, Tested: false } });
+	assert.strictEqual(libre.SetupTwoFactor, false);
+});

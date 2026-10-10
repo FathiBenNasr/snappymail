@@ -42,10 +42,23 @@
 	});
 
 	// https://github.com/the-djmaze/snappymail/issues/349
+	// Since 2.27.0 the server refuses, until the second factor is on, what the
+	// mailbox loads at boot (identities, the data of other plugins): leaving
+	// the settings once enrolled reloads the application, which then starts
+	// whole. Not on enabling itself — the backup codes are still on screen,
+	// and they are shown only once.
+	let forced = false;
 	addEventListener('sm-show-screen', e => {
-		if (!e.detail.startsWith('settings') && rl.settings.get('SetupTwoFactor')) {
+		const settings = e.detail.startsWith('settings');
+		if (rl.settings.get('SetupTwoFactor')) {
+			forced = true;
+			if (!settings) {
+				e.preventDefault();
+				forceTOTP();
+			}
+		} else if (forced && !settings) {
 			e.preventDefault();
-			forceTOTP();
+			document.location.reload();
 		}
 	});
 

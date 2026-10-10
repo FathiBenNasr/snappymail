@@ -61,16 +61,21 @@ class TwoFactorAuthSettings
 					value = !!value;
 					if (value && this.twoFactorTested()) {
 						this.viewEnable_(value);
-						Remote.enableTwoFactor(iError => {
-							fn(iError);
-							rl.settings.get('RequireTwoFactor') && rl.settings.set('SetupTwoFactor', !!iError);
+						Remote.enableTwoFactor((iError, oData) => {
+							const on = !iError && !!oData?.Result;
+							fn(on ? 0 : (iError || 1));
+							rl.settings.get('RequireTwoFactor') && rl.settings.set('SetupTwoFactor', !on);
 						}, value);
 					} else if (this.viewEnable_()) {
 						// Switching it off asks for a current code (2.21.0): a
 						// stolen session must not be enough to drop the second factor.
 						TwoFactorAuthTestPopupView.showModal([
 							() => this.viewEnable_(false),
-							(code, done) => Remote.enableTwoFactor(done, false, code)
+							(code, done) => Remote.enableTwoFactor((iError, oData) => {
+								// Off again: the server refuses everything again (2.27.0), so the screen forces again.
+								!iError && oData?.Result && rl.settings.get('RequireTwoFactor') && rl.settings.set('SetupTwoFactor', true);
+								done(iError, oData);
+							}, false, code)
 						]);
 					} else {
 						Remote.enableTwoFactor(fn, false);
@@ -132,6 +137,8 @@ class TwoFactorAuthSettings
 			rl.pluginRemoteRequest((iError, oData) => {
 				const ok = !iError && oData && false !== oData.Result;
 				ok ? (this.twoFactorTested(false), this.onResult(iError, oData)) : this.clearing(false);
+				// Cleared: required again, refused again by the server (2.27.0).
+				ok && rl.settings.get('RequireTwoFactor') && rl.settings.set('SetupTwoFactor', true);
 				done && done(ok ? 0 : 1, { Result: ok });
 			}, 'ClearTwoFactorInfo', { Code: code || '' });
 		};
