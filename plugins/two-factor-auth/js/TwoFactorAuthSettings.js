@@ -7,6 +7,33 @@ import { trigger as translatorTrigger } from 'Common/Translator';
 const
 	pString = value => null != value ? '' + value : '',
 
+	// Logged in (AppData.Auth strictly true): nothing is asked of the server before.
+	authentifie = () => {
+		try {
+			return true === (window.rl && rl.settings && rl.settings.get('Auth'));
+		} catch (e) {
+			return false;
+		}
+	},
+
+	webauthn = () => window.TwoFactorWebAuthn,
+
+	/**
+	 * A current second factor, as the server takes it: { Code } or, since
+	 * 2.28.0, { Assertion } from a security key. A bare string is a code.
+	 */
+	proofOf = proof => 'string' === typeof proof ? { Code: proof } : Object.assign({ Code: '' }, proof || {}),
+
+	// A date, in the language of the page; the server sends seconds.
+	dateOf = ts => {
+		try {
+			const lang = ('undefined' !== typeof document && document.documentElement && document.documentElement.lang) || undefined;
+			return new Intl.DateTimeFormat(lang, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(ts * 1000));
+		} catch (e) {
+			return new Date(ts * 1000).toISOString().slice(0, 16).replace('T', ' ');
+		}
+	},
+
 	Remote = new class {
 		/**
 		 * @param {?Function} fCallback
@@ -21,12 +48,12 @@ const
 		/**
 		 * @param {?Function} fCallback
 		 * @param {boolean} bEnable
+		 * @param {string|Object} proof a code, or { Assertion }
 		 */
-		enableTwoFactor(fCallback, bEnable, sCode) {
-			rl.pluginRemoteRequest(fCallback, 'EnableTwoFactor', {
-				Enable: bEnable ? 1 : 0,
-				Code: sCode || ''
-			});
+		enableTwoFactor(fCallback, bEnable, proof) {
+			rl.pluginRemoteRequest(fCallback, 'EnableTwoFactor', Object.assign({
+				Enable: bEnable ? 1 : 0
+			}, proofOf(proof)));
 		}
 	};
 
@@ -53,6 +80,19 @@ class TwoFactorAuthSettings
 
 		this.viewEnable_ = ko.observable(false);
 
+		// 2.28.0: security keys and passkeys. Plain observables, set from each
+		// answer of the server — no computed, nothing calculated in the template.
+		this.secondFactorOn = ko.observable(false);
+		this.webauthn = ko.observable(false);
+		this.webauthnSupported = ko.observable(!!(webauthn() && webauthn().supported()));
+		this.passkeys = ko.observableArray ? ko.observableArray([]) : ko.observable([]);
+		this.hasPasskeys = ko.observable(false);
+		this.maxPasskeys = ko.observable(0);
+		this.canAddPasskey = ko.observable(false);
+		this.newPasskeyName = ko.observable('');
+		this.passkeyBusy = ko.observable(false);
+		this.passkeyError = ko.observable('');
+
 		const fn = iError => iError && this.viewEnable_(false);
 		Object.entries({
 			viewEnable: {
@@ -67,16 +107,16 @@ class TwoFactorAuthSettings
 							rl.settings.get('RequireTwoFactor') && rl.settings.set('SetupTwoFactor', !on);
 						}, value);
 					} else if (this.viewEnable_()) {
-						// Switching it off asks for a current code (2.21.0): a
-						// stolen session must not be enough to drop the second factor.
-						TwoFactorAuthTestPopupView.showModal([
-							() => this.viewEnable_(false),
-							(code, done) => Remote.enableTwoFactor((iError, oData) => {
-								// Off again: the server refuses everything again (2.27.0), so the screen forces again.
-								!iError && oData?.Result && rl.settings.get('RequireTwoFactor') && rl.settings.set('SetupTwoFactor', true);
+						// Switching it off asks for a current code (2.21.0) — or a
+						// security key (2.28.0): a stolen session must not be
+						// enough to drop the second factor.
+						this.prove((proof, done) => Remote.enableTwoFactor((iError, oData) => {
+								const ok = !iError && !!oData?.Result;
+								// Off again, and no key left: the server refuses everything again (2.27.0), so the screen forces again.
+								ok && rl.settings.get('RequireTwoFactor') && !this.hasPasskeys() && rl.settings.set('SetupTwoFactor', true);
 								done(iError, oData);
-							}, false, code)
-						]);
+							}, false, proof),
+							() => this.viewEnable_(false));
 					} else {
 						Remote.enableTwoFactor(fn, false);
 					}
@@ -103,6 +143,15 @@ class TwoFactorAuthSettings
 
 		this.onResult = this.onResult.bind(this);
 		this.onShowSecretResult = this.onShowSecretResult.bind(this);
+		['addPasskey', 'renamePasskey', 'savePasskey', 'removePasskey'].forEach(m => this[m] = this[m].bind(this));
+	}
+
+	/**
+	 * Asks for a current second factor, then runs action(proof, done): the
+	 * code popup, with "use a security key" when the account has one.
+	 */
+	prove(action, onSuccess) {
+		TwoFactorAuthTestPopupView.showModal([onSuccess || (() => {}), action, this.hasPasskeys()]);
 	}
 
 	showSecret() {
@@ -117,8 +166,16 @@ class TwoFactorAuthSettings
 	}
 
 	createTwoFactor() {
-		this.processing(true);
-		rl.pluginRemoteRequest(this.onResult, 'CreateTwoFactorSecret');
+		const create = (proof, done) => {
+			this.processing(true);
+			rl.pluginRemoteRequest((iError, oData) => {
+				const ok = !iError && !!oData?.Result;
+				ok ? this.onResult(iError, oData) : this.processing(false);
+				done && done(ok ? 0 : (iError || 1), { Result: ok });
+			}, 'CreateTwoFactorSecret', proof ? proofOf(proof) : {});
+		};
+		// A security key is already on (2.28.0): adding a TOTP needs a current factor.
+		this.secondFactorOn() ? this.prove(create) : create();
 	}
 
 	testTwoFactor() {
@@ -131,7 +188,7 @@ class TwoFactorAuthSettings
 	}
 
 	clearTwoFactor() {
-		const clear = (code, done) => {
+		const clear = (proof, done) => {
 			this.hideSecret();
 			this.clearing(true);
 			rl.pluginRemoteRequest((iError, oData) => {
@@ -140,16 +197,106 @@ class TwoFactorAuthSettings
 				// Cleared: required again, refused again by the server (2.27.0).
 				ok && rl.settings.get('RequireTwoFactor') && rl.settings.set('SetupTwoFactor', true);
 				done && done(ok ? 0 : 1, { Result: ok });
-			}, 'ClearTwoFactorInfo', { Code: code || '' });
+			}, 'ClearTwoFactorInfo', proofOf(proof));
 		};
-		// Once on, removing it asks for a current code (2.21.0).
-		this.viewEnable_()
-			? TwoFactorAuthTestPopupView.showModal([() => {}, clear])
+		// Once on, removing it asks for a current code (2.21.0) or key (2.28.0).
+		this.viewEnable_() || this.secondFactorOn()
+			? this.prove(clear)
 			: clear('');
+	}
+
+	/* ---- security keys and passkeys (2.28.0) ---- */
+
+	applyInfo(info) {
+		if (!info || !Array.isArray(info.Passkeys)) {
+			return;
+		}
+		const never = rl.i18n('PLUGIN_2FA/PASSKEY_NEVER_USED');
+		this.passkeys(info.Passkeys.map(k => ({
+			ref: pString(k.Ref),
+			name: ko.observable(pString(k.Name)),
+			draft: ko.observable(pString(k.Name)),
+			editing: ko.observable(false),
+			created: k.Created ? dateOf(k.Created) : '',
+			lastUsed: k.LastUsed ? dateOf(k.LastUsed) : never
+		})));
+		this.hasPasskeys(info.Passkeys.length > 0);
+		this.secondFactorOn(!!info.On);
+		this.webauthn(!!info.WebAuthn);
+		this.maxPasskeys(info.MaxPasskeys | 0);
+		this.canAddPasskey(!!info.WebAuthn && info.Passkeys.length < (info.MaxPasskeys | 0));
+		rl.settings.get('RequireTwoFactor') && rl.settings.set('SetupTwoFactor', !info.Enrolled);
+	}
+
+	addPasskey() {
+		if (!authentifie() || this.passkeyBusy()) {
+			return;
+		}
+		if (!webauthn() || !webauthn().supported()) {
+			this.passkeyError(rl.i18n('PLUGIN_2FA/PASSKEYS_UNSUPPORTED'));
+			return;
+		}
+		const fail = key => {
+				this.passkeyBusy(false);
+				this.passkeyError(rl.i18n(key));
+			},
+			register = proof => {
+				this.passkeyBusy(true);
+				this.passkeyError('');
+				rl.pluginRemoteRequest((iError, oData) => {
+					if (iError || !oData?.Result) {
+						return fail('PLUGIN_2FA/ERROR_PASSKEY_REFUSED');
+					}
+					webauthn().create(oData.Result).then(json => rl.pluginRemoteRequest((iError, oData) => {
+						if (iError || !oData?.Result) {
+							return fail('PLUGIN_2FA/ERROR_PASSKEY_REFUSED');
+						}
+						this.passkeyBusy(false);
+						this.newPasskeyName('');
+						this.applyInfo(oData.Result);
+						// The first factor of the account: its backup codes, shown this once.
+						oData.Result.BackupCodes && this.viewBackupCodes(pString(oData.Result.BackupCodes).replace(/[\s]+/g, '  '));
+					}, 'WebAuthnRegister', Object.assign({
+						Name: this.newPasskeyName(),
+						Credential: json
+					}, proof)), () => fail('PLUGIN_2FA/ERROR_PASSKEY_FAILED'));
+				}, 'WebAuthnCreateOptions');
+			};
+		// Already protected: adding a key needs a current factor, checked by
+		// the server with the registration itself.
+		this.secondFactorOn()
+			? this.prove((proof, done) => {
+				done(0, { Result: true });
+				register(proofOf(proof));
+			})
+			: register({});
+	}
+
+	renamePasskey(row) {
+		row.draft(row.name());
+		row.editing(!row.editing());
+	}
+
+	savePasskey(row) {
+		rl.pluginRemoteRequest((iError, oData) => {
+			!iError && oData?.Result
+				? this.applyInfo(oData.Result)
+				: this.passkeyError(rl.i18n('PLUGIN_2FA/ERROR_PASSKEY_REFUSED'));
+		}, 'WebAuthnRename', { Ref: row.ref, Name: row.draft() });
+	}
+
+	removePasskey(row) {
+		this.prove((proof, done) => rl.pluginRemoteRequest((iError, oData) => {
+			const ok = !iError && !!oData?.Result;
+			ok && this.applyInfo(oData.Result);
+			done(ok ? 0 : (iError || 1), { Result: ok });
+		}, 'WebAuthnRemove', Object.assign({ Ref: row.ref }, proofOf(proof))));
 	}
 
 	onShow() {
 		this.appPasswordsNote(!!rl.settings.get('TwoFactorAppPasswords'));
+		this.webauthnSupported(!!(webauthn() && webauthn().supported()));
+		this.passkeyError('');
 		this.hideSecret('');
 	}
 
@@ -178,6 +325,7 @@ class TwoFactorAuthSettings
 			this.viewSecret(pString(oData.Result.Secret));
 			this.viewQRCode(oData.Result.QRCode);
 			this.viewBackupCodes(pString(oData.Result.BackupCodes).replace(/[\s]+/g, '  '));
+			this.applyInfo(oData.Result);
 		}
 	}
 
@@ -194,6 +342,9 @@ class TwoFactorAuthSettings
 	}
 
 	onBuild() {
+		if (!authentifie()) {
+			return;
+		}
 		this.processing(true);
 		rl.pluginRemoteRequest(this.onResult, 'GetTwoFactorInfo');
 	}
@@ -206,15 +357,17 @@ class TwoFactorAuthTestPopupView extends rl.pluginPopupView {
 		this.addObservables({
 			code: '',
 			codeStatus: null,
-			testing: false
+			testing: false,
+			keyAvailable: false
 		});
 
 		ko.decorateCommands(this, {
-			testCodeCommand: self => self.code() && !self.testing()
+			testCodeCommand: self => self.code() && !self.testing(),
+			useKeyCommand: self => self.keyAvailable() && !self.testing()
 		});
 	}
 
-	testCodeCommand() {
+	answer(proof) {
 		this.testing(true);
 		// ⚠️ « pas d'erreur » n'est pas « code juste » : le serveur répond
 		// `false` à un mauvais code sans lever d'erreur.
@@ -223,19 +376,41 @@ class TwoFactorAuthTestPopupView extends rl.pluginPopupView {
 			this.testing(false);
 			this.codeStatus(ok);
 			ok && (this.onSuccess() | this.close());
-		}, this.code());
+		}, proof);
+	}
+
+	testCodeCommand() {
+		this.answer(this.code());
+	}
+
+	/** 2.28.0: the current factor given by a security key instead of a code. */
+	useKeyCommand() {
+		this.testing(true);
+		rl.pluginRemoteRequest((iError, oData) => {
+			if (iError || !oData?.Result) {
+				this.testing(false);
+				this.codeStatus(false);
+				return;
+			}
+			window.TwoFactorWebAuthn.get(oData.Result).then(
+				json => this.answer({ Assertion: json }),
+				() => { this.testing(false); this.codeStatus(false); }
+			);
+		}, 'WebAuthnAssertOptions');
 	}
 
 	/**
 	 * @param {Function} onSuccess
-	 * @param {?Function} action fn(code, done) — by default, test the code
+	 * @param {?Function} action fn(proof, done) — by default, test the code
+	 * @param {boolean} withKey offer "use a security key" (the account has one)
 	 */
-	onShow(onSuccess, action) {
+	onShow(onSuccess, action, withKey) {
 		this.code('');
 		this.codeStatus(null);
 		this.testing(false);
+		this.keyAvailable(!!(withKey && action && window.TwoFactorWebAuthn && window.TwoFactorWebAuthn.supported()));
 		this.onSuccess = onSuccess;
-		this.action = action ? (done, code) => action(code, done) : (done, code) => Remote.verifyCode(done, code);
+		this.action = action ? (done, proof) => action(proof, done) : (done, code) => Remote.verifyCode(done, code);
 	}
 }
 

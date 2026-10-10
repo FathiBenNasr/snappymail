@@ -8,7 +8,42 @@
 			}
 		};
 
-	let loginView = null;
+	let loginView = null,
+		// 2.28.0: the request options of the account's security keys, sent
+		// by the server after a right password; spent once used.
+		keyOptions = null,
+		wantKey = false;
+
+	const
+		webauthn = () => window.TwoFactorWebAuthn,
+		dom = sel => loginView?.viewModelDom?.querySelector(sel),
+		showKey = on => { const b = dom('.twofactor-key'); b && (b.hidden = !on); },
+		// The password is still in the form: the key is the second step, sent
+		// with it in a hidden field, through the core's own sign-in button.
+		submit = () => dom('.buttonLogin')?.click(),
+		useKey = () => {
+			if (!keyOptions) {
+				// Spent (a failed try): the form is sent again without a factor,
+				// the server answers with a new challenge, and the key follows.
+				wantKey = true;
+				const code = dom('input[name=totp_code]');
+				code && (code.value = '', code.dispatchEvent(new Event('input')));
+				submit();
+				return;
+			}
+			const options = keyOptions;
+			keyOptions = null;
+			webauthn().get(options).then(json => {
+				const field = dom('input[name=webauthn_assertion]');
+				if (field) {
+					field.value = json;
+					submit();
+				}
+			}, () => {
+				// Cancelled, timed out, or no such key here: say so, the code stays possible.
+				loginView.submitError(rl.i18n('PLUGIN_2FA/ERROR_PASSKEY_FAILED'));
+			});
+		};
 
 	addEventListener('rl-view-model', e => {
 		if ('Login' === e.detail.viewModelTemplateID) {
@@ -23,7 +58,14 @@
 					+ ' autocomplete="one-time-code" autocorrect="off" autocapitalize="none"'
 					+ ' data-bind="textInput: totp, disable: submitRequest" data-i18n="[placeholder]'+placeholder
 					+ '" placeholder="'+rl.i18n(placeholder)+'">'
+				+ '<input name="webauthn_assertion" type="hidden" value="">'
 				+ '</div>'));
+				// Shown only once the server has said this account has a key.
+				const button = Element.fromHTML('<div class="controls twofactor-key" hidden="">'
+					+ '<button type="button" class="btn" data-i18n="PLUGIN_2FA/BUTTON_USE_PASSKEY">'
+					+ rl.i18n('PLUGIN_2FA/BUTTON_USE_PASSKEY') + '</button></div>');
+				button.querySelector('button')?.addEventListener('click', useKey);
+				container.append(button);
 			}
 		}
 	});
@@ -32,12 +74,26 @@
 	// "authentication failed" that sends people to reset a good password.
 	// The core sets its own message right after this event, hence the timeout.
 	addEventListener('sm-user-login-response', e => {
-		if (e.detail?.error && 'TwoFactorCodeRequired' === e.detail.data?.messageAdditional && loginView) {
+		// An assertion is used once, whatever the answer.
+		const field = dom('input[name=webauthn_assertion]');
+		field && (field.value = '');
+		const additional = e.detail?.data?.messageAdditional || '';
+		if (e.detail?.error && loginView && /^TwoFactorCodeRequired(:|$)/.test(additional)) {
+			keyOptions = webauthn()?.supported() ? webauthn().fromRefusal(additional) : null;
+			showKey(!!keyOptions);
 			setTimeout(() => {
-				loginView.submitError(rl.i18n('PLUGIN_2FA/ERROR_CODE_REQUIRED'));
+				loginView.submitError(rl.i18n(keyOptions ? 'PLUGIN_2FA/ERROR_CODE_OR_KEY_REQUIRED' : 'PLUGIN_2FA/ERROR_CODE_REQUIRED'));
 				loginView.submitErrorAdditional('');
-				loginView.viewModelDom?.querySelector('input[name=totp_code]')?.focus();
+				if (keyOptions && wantKey) {
+					wantKey = false;
+					useKey();
+				} else {
+					dom('input[name=totp_code]')?.focus();
+				}
 			}, 0);
+		} else {
+			wantKey = false;
+			e.detail?.error || (keyOptions = null, showKey(false));
 		}
 	});
 

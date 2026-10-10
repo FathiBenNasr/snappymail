@@ -125,5 +125,33 @@ if ('' !== $sZbar && \is_executable($sPy)) {
 	echo "  skip  zbarimg or cairosvg absent: the scan is not proven here\n";
 }
 
+/* ---- 2.28.0: security keys in the record ---- */
+$sKeyR = TwoFactorRecord::key('salt-of-this-install');
+$aB = TwoFactorRecord::blank('rym@smail.tn');
+check('a blank record: no factor', array(TwoFactorRecord::isOn($aB, $sKeyR), TwoFactorRecord::hasFactor($aB, $sKeyR)), array(false, false));
+$aK = TwoFactorRecord::withPasskeys($aB, array(array('Id' => 'abc', 'Name' => 'YubiKey')), $sKeyR);
+check('with a key: on, and enrolled', array(TwoFactorRecord::isOn($aK, $sKeyR), TwoFactorRecord::hasFactor($aK, $sKeyR)), array(true, true));
+check('the key list comes back out of its box', TwoFactorRecord::passkeys($aK, $sKeyR), array(array('Id' => 'abc', 'Name' => 'YubiKey')));
+check('the box does not show the key in clear', \str_contains(\json_encode($aK), 'YubiKey'), false);
+check('under another salt the box does not open: on at login (fail closed), not enrolled',
+	array(TwoFactorRecord::passkeys($aK, TwoFactorRecord::key('other')), TwoFactorRecord::isOn($aK, TwoFactorRecord::key('other')), TwoFactorRecord::hasFactor($aK, TwoFactorRecord::key('other'))),
+	array(null, true, false));
+check('no key left: the box is gone', isset(TwoFactorRecord::withPasskeys($aK, array(), $sKeyR)['PasskeysBox']), false);
+
+$aC = TwoFactorRecord::addChallenge($aB, 'c1', 'login', 'browser-1', 1000, 300, $sKeyR);
+check('a challenge is kept with a keyed hash of the browser, not the token', \str_contains(\json_encode($aC), 'browser-1'), false);
+[$bOk, $aAfter] = TwoFactorRecord::takeChallenge($aC, 'c1', 'login', 'browser-1', 1100, $sKeyR);
+check('taken once, by the same purpose and browser, in time', array($bOk, $aAfter['Challenges']), array(true, array()));
+check('taken twice: no', TwoFactorRecord::takeChallenge($aAfter, 'c1', 'login', 'browser-1', 1100, $sKeyR)[0], false);
+[$bOk, $aAfter] = TwoFactorRecord::takeChallenge($aC, 'c1', 'reauth', 'browser-1', 1100, $sKeyR);
+check('another purpose: refused, and spent all the same', array($bOk, $aAfter['Challenges']), array(false, array()));
+check('another browser: refused', TwoFactorRecord::takeChallenge($aC, 'c1', 'login', 'browser-2', 1100, $sKeyR)[0], false);
+check('no binding at all: refused', TwoFactorRecord::takeChallenge(TwoFactorRecord::addChallenge($aB, 'c1', 'login', '', 1000, 300, $sKeyR), 'c1', 'login', '', 1100, $sKeyR)[0], false);
+check('expired: refused', TwoFactorRecord::takeChallenge($aC, 'c1', 'login', 'browser-1', 1300, $sKeyR)[0], false);
+$aMany = $aB;
+for ($i = 0; $i < 20; ++$i) { $aMany = TwoFactorRecord::addChallenge($aMany, "c$i", 'login', 'b', 1000, 300, $sKeyR); }
+check('at most ' . TwoFactorRecord::MAX_CHALLENGES . ' pending, the newest kept', array(\count($aMany['Challenges']), \end($aMany['Challenges'])['c']), array(TwoFactorRecord::MAX_CHALLENGES, 'c19'));
+check('expired ones are dropped when a new one comes', \count(TwoFactorRecord::addChallenge($aMany, 'n', 'login', 'b', 5000, 300, $sKeyR)['Challenges']), 1);
+
 echo "\n", $iFail ? "$iFail failed\n" : "0 failed\n";
 exit($iFail ? 1 : 0);

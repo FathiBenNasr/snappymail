@@ -74,6 +74,50 @@
 		<i class="fontastic" data-bind="css: {'icon-spinner': processing()}">▶</i>
 		<span data-i18n="PLUGIN_2FA/BUTTON_ACTIVATE"></span>
 	</a>
+
+	<!-- 2.28.0: security keys and passkeys, a second factor next to the code. -->
+	<div class="b-settings-two-factor-keys" data-bind="visible: webauthn">
+		<div class="legend" data-i18n="PLUGIN_2FA/LEGEND_PASSKEYS"></div>
+		<p class="muted" data-i18n="PLUGIN_2FA/PASSKEYS_DESC"></p>
+		<p class="muted" data-bind="visible: !webauthnSupported()" data-i18n="PLUGIN_2FA/PASSKEYS_UNSUPPORTED"></p>
+		<table class="table table-hover" data-bind="visible: hasPasskeys">
+			<thead>
+				<tr>
+					<th data-i18n="PLUGIN_2FA/LABEL_PASSKEY_NAME"></th>
+					<th data-i18n="PLUGIN_2FA/LABEL_PASSKEY_CREATED"></th>
+					<th data-i18n="PLUGIN_2FA/LABEL_PASSKEY_LAST_USED"></th>
+					<th></th>
+				</tr>
+			</thead>
+			<tbody data-bind="foreach: passkeys">
+				<tr class="twofactor-passkey">
+					<td>
+						<span dir="auto" style="unicode-bidi: plaintext" data-bind="text: name, visible: !editing()"></span>
+						<input type="text" class="uiInput" maxlength="64" dir="auto" style="unicode-bidi: plaintext"
+							data-bind="textInput: draft, visible: editing, onEnter: $parent.savePasskey">
+					</td>
+					<td style="unicode-bidi: plaintext" data-bind="text: created"></td>
+					<td style="unicode-bidi: plaintext" data-bind="text: lastUsed"></td>
+					<td style="white-space: nowrap">
+						<span class="g-ui-link" data-bind="click: $parent.renamePasskey, visible: !editing()" data-i18n="PLUGIN_2FA/LINK_RENAME"></span>
+						<span class="g-ui-link" data-bind="click: $parent.savePasskey, visible: editing" data-i18n="PLUGIN_2FA/LINK_SAVE"></span>
+						&nbsp;
+						<span class="g-ui-link" data-bind="click: $parent.removePasskey" data-i18n="PLUGIN_2FA/LINK_REMOVE"></span>
+					</td>
+				</tr>
+			</tbody>
+		</table>
+		<div class="control-group" data-bind="visible: canAddPasskey">
+			<input type="text" class="uiInput" maxlength="64" dir="auto" style="unicode-bidi: plaintext"
+				data-bind="textInput: newPasskeyName, disable: passkeyBusy" data-i18n="[placeholder]PLUGIN_2FA/PLACEHOLDER_PASSKEY_NAME">
+			<a class="btn twofactor-add-passkey" data-bind="click: addPasskey, css: {disabled: passkeyBusy}">
+				<i class="fontastic" data-bind="css: {'icon-spinner': passkeyBusy()}">🔑</i>
+				<span data-i18n="PLUGIN_2FA/BUTTON_ADD_PASSKEY"></span>
+			</a>
+		</div>
+		<p class="muted" data-bind="visible: webauthn() && !canAddPasskey() && hasPasskeys()" data-i18n="PLUGIN_2FA/PASSKEYS_MAX"></p>
+		<div class="alert" data-bind="visible: passkeyError, text: passkeyError"></div>
+	</div>
 <!--
 	<a class="btn" data-bind="click: close, visible: viewEnable()">
 		<i class="icon-ok" ></i>

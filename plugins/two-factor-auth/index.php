@@ -1,6 +1,7 @@
 <?php
 
 require_once __DIR__ . '/providers/record.php';
+require_once __DIR__ . '/providers/webauthn.php';
 
 use \RainLoop\Exceptions\ClientException;
 use \RainLoop\Model\Account;
@@ -10,11 +11,11 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 {
 	const
 		NAME     = 'Two Factor Authentication',
-		VERSION  = '2.27.0',
+		VERSION  = '2.28.0',
 		RELEASE  = '2026-10-10',
 		REQUIRED = '2.36.0',
 		CATEGORY = 'Login',
-		DESCRIPTION = 'Provides support for TOTP 2FA',
+		DESCRIPTION = 'Provides support for TOTP 2FA and security keys / passkeys (WebAuthn) as a second factor',
 		// The additional message of the refusal when the code is missing.
 		CODE_REQUIRED = 'TwoFactorCodeRequired',
 		// The additional message when a protected account is refused as an additional one.
@@ -35,9 +36,14 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 		 *    lost the QR code before testing it.
 		 * Everything else the boot calls (AccountsAndIdentities, SettingsUpdate,
 		 * other plugins) is refused, and the screen still enrols.
+		 *  - DoPluginWebAuthnCreateOptions and DoPluginWebAuthnRegister (2.28.0):
+		 *    a security key is a second factor too, and registering one is how
+		 *    such an account may enrol instead of the TOTP. Measured on
+		 *    banc-smail (tests/browser/cle.js).
 		 */
 		SETUP_ALLOWED_ACTIONS = 'DoFolders DoLogout DoPluginGetTwoFactorInfo DoPluginCreateTwoFactorSecret'
-			. ' DoPluginShowTwoFactorSecret DoPluginVerifyTwoFactorCode DoPluginEnableTwoFactor DoPluginClearTwoFactorInfo',
+			. ' DoPluginShowTwoFactorSecret DoPluginVerifyTwoFactorCode DoPluginEnableTwoFactor DoPluginClearTwoFactorInfo'
+			. ' DoPluginWebAuthnCreateOptions DoPluginWebAuthnRegister',
 		/**
 		 * The services (first segment of ?/<Service>/...) such an account may
 		 * reach. Measured: AppData, Plugins, Json. Css and Lang serve code,
@@ -53,6 +59,7 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 	{
 		$this->UseLangs(true);
 
+		$this->addJs('js/TwoFactorWebAuthn.js');
 		$this->addJs('js/TwoFactorAuthLogin.js');
 		$this->addJs('js/TwoFactorAuthSettings.js');
 
@@ -73,6 +80,12 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 		$this->addJsonHook('EnableTwoFactor', 'DoEnableTwoFactor');
 		$this->addJsonHook('VerifyTwoFactorCode', 'DoVerifyTwoFactorCode');
 		$this->addJsonHook('ClearTwoFactorInfo', 'DoClearTwoFactorInfo');
+		// 2.28.0: security keys and passkeys (WebAuthn) as a second factor.
+		$this->addJsonHook('WebAuthnCreateOptions', 'DoWebAuthnCreateOptions');
+		$this->addJsonHook('WebAuthnRegister', 'DoWebAuthnRegister');
+		$this->addJsonHook('WebAuthnAssertOptions', 'DoWebAuthnAssertOptions');
+		$this->addJsonHook('WebAuthnRename', 'DoWebAuthnRename');
+		$this->addJsonHook('WebAuthnRemove', 'DoWebAuthnRemove');
 
 		$this->addTemplate('templates/TwoFactorAuthSettings.html');
 		$this->addTemplate('templates/PopupsTwoFactorAuthTest.html');
@@ -110,6 +123,41 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 				->SetType(\RainLoop\Enumerations\PluginPropertyType::STRING)
 				->SetDescription('Optional https:// address of a square PNG (256x256 works well) that FreeOTP, FreeOTP+ and 2FAS draw next to the account. The phone fetches it, not the browser, so it must be reachable from the internet. Google Authenticator, Microsoft Authenticator and Aegis ignore it.')
 				->SetDefaultValue(''),
+			// 2.28.0: security keys and passkeys (WebAuthn), as a second factor only.
+			\RainLoop\Plugins\Property::NewInstance("webauthn_enabled")
+				->SetLabel('Security keys and passkeys (WebAuthn) as a second factor')
+				->SetType(\RainLoop\Enumerations\PluginPropertyType::BOOL)
+				->SetDescription('A second factor next to the TOTP code, never instead of the password: the password still opens the mailbox. Needs the origin below.')
+				->SetDefaultValue(false),
+			\RainLoop\Plugins\Property::NewInstance("webauthn_origins")
+				->SetLabel('Security keys: webmail origins')
+				->SetType(\RainLoop\Enumerations\PluginPropertyType::STRING_TEXT)
+				->SetDescription('The addresses this webmail is served at, one per line, e.g. https://webmail.example.com (scheme, host, and port when not the default). The browser reports the origin; the Host header of the request is never trusted. Empty: security keys stay off.')
+				->SetDefaultValue(''),
+			\RainLoop\Plugins\Property::NewInstance("webauthn_rp_id")
+				->SetLabel('Security keys: relying party ID')
+				->SetType(\RainLoop\Enumerations\PluginPropertyType::STRING)
+				->SetDescription('The domain the keys are bound to: the host of the origins or a parent domain of it. Empty: the host of the first origin. Changing it later makes every registered key unusable.')
+				->SetDefaultValue(''),
+			\RainLoop\Plugins\Property::NewInstance("webauthn_require_uv")
+				->SetLabel('Security keys: require user verification (PIN or biometrics)')
+				->SetType(\RainLoop\Enumerations\PluginPropertyType::BOOL)
+				->SetDescription('Off: a touch of the key is enough (it is a second factor, the password came first). On: keys without a PIN or biometrics are refused.')
+				->SetDefaultValue(false),
+			\RainLoop\Plugins\Property::NewInstance("webauthn_max_passkeys")
+				->SetLabel('Security keys: at most this many per account')
+				->SetType(\RainLoop\Enumerations\PluginPropertyType::INT)
+				->SetDefaultValue(10),
+			\RainLoop\Plugins\Property::NewInstance("webauthn_challenge_ttl")
+				->SetLabel('Security keys: seconds a challenge stays valid')
+				->SetType(\RainLoop\Enumerations\PluginPropertyType::INT)
+				->SetDescription('Between 30 and 3600. Each challenge is used once.')
+				->SetDefaultValue(300),
+			\RainLoop\Plugins\Property::NewInstance("webauthn_counter_regression")
+				->SetLabel('Security keys: a signature counter that goes back')
+				->SetType(\RainLoop\Enumerations\PluginPropertyType::SELECTION)
+				->SetDescription('refuse: the sign-in is refused (a counter that does not grow may mean a cloned key). warn: accepted and logged.')
+				->SetDefaultValue(array('refuse', 'warn')),
 		];
 	}
 
@@ -126,7 +174,8 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 				$aResult['RequireTwoFactor'] = $aResult['RequireTwoFactor'] || $this->forcedFor($oAccount->Email());
 				if ($aResult['RequireTwoFactor']) {
 					$aData = $this->getTwoFactorInfo($oAccount);
-					$aResult['SetupTwoFactor'] = empty($aData['IsSet']) || empty($aData['Enable']);
+					// A security key counts as much as the TOTP (2.28.0).
+					$aResult['SetupTwoFactor'] = empty($aData['Enrolled']);
 				}
 			}
 
@@ -305,7 +354,7 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 			$this->Logger()->Write("TFA: record of {$oAccount->Email()} unreadable, counted as not set up");
 			return true;
 		}
-		return !$aRecord || empty($aRecord['Enable']);
+		return !$aRecord || !TwoFactorRecord::hasFactor($aRecord, $this->recordKey());
 	}
 
 	/**
@@ -356,7 +405,7 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 		// By address: the storage of an AdditionalAccount object resolves to
 		// the directory of the main account that holds it, not to its own.
 		$aRecord = $this->loadRecordFor($oAccount->Email());
-		if (!$aRecord || empty($aRecord['Enable'])) {
+		if (!$aRecord || !TwoFactorRecord::isOn($aRecord, $this->recordKey())) {
 			return;
 		}
 		$this->Logger()->Write("TFA: {$oAccount->Email()} refused as an additional account, its second factor is on");
@@ -368,22 +417,38 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 		throw new ClientException(\RainLoop\Notifications::AuthError, null, self::NOT_ADDITIONAL);
 	}
 
+	/**
+	 * The second factor of a login: a code (TOTP or backup), or — 2.28.0 — a
+	 * security key's assertion.
+	 *
+	 * Why a key is a SECOND factor here and never a passwordless login: the
+	 * webmail opens the mailbox over IMAP with the person's password. A key
+	 * proves who is at the keyboard, it does not give us that password; a
+	 * passwordless login would need the server to keep every password (or a
+	 * master credential able to open any mailbox), which the owner's rules
+	 * refuse (moindre privilège). So the password comes first, then the key.
+	 */
 	public function DoLogin(MainAccount $oAccount)
 	{
 		$aRecord = $this->loadRecord($oAccount);
-		if (!$aRecord || empty($aRecord['Enable'])) {
+		if (!$aRecord || !TwoFactorRecord::isOn($aRecord, $this->recordKey())) {
 			return;
 		}
-		$sCode = \trim($this->jsonParam('totp_code', ''));
-		if (empty($sCode)) {
+		$sAssertion = \trim((string) $this->jsonParam('webauthn_assertion', ''));
+		$sCode = \trim((string) $this->jsonParam('totp_code', ''));
+		if ('' === $sAssertion && empty($sCode)) {
 			$this->Logger()->Write("TFA: Code required for {$oAccount->Email()}");
 			// Named, so the login screen asks for the code instead of saying
 			// "authentication failed": the password was right, and a person
 			// told otherwise resets a good password.
 			// Saying so after a correct password is what every 2FA login does.
-			throw new ClientException(\RainLoop\Notifications::AuthError, null, self::CODE_REQUIRED);
+			// With a security key, the request options follow the name: the
+			// challenge is only ever issued once the password was right.
+			throw new ClientException(\RainLoop\Notifications::AuthError, null, self::CODE_REQUIRED . $this->loginKeyOptions($oAccount));
 		}
-		$sOutcome = $this->checkCode($oAccount, $aRecord, $sCode);
+		$sOutcome = '' !== $sAssertion
+			? $this->checkAssertion($oAccount, $sAssertion, 'login', $this->loginBinding())
+			: $this->checkCode($oAccount, $aRecord, $sCode);
 		if ('ok' !== $sOutcome) {
 			// The failure goes to the auth log as well, which fail2ban reads.
 			$this->logAuthFailure($oAccount, $sOutcome);
@@ -416,10 +481,24 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 		if ($aExisting && !empty($aExisting['Enable'])) {
 			return $this->jsonResponse(__FUNCTION__, false);
 		}
+		// A security key is already on (2.28.0): adding a TOTP is adding a
+		// second factor, and a stolen session must not be able to.
+		if ($aExisting && TwoFactorRecord::isOn($aExisting, $this->recordKey())) {
+			if ('ok' !== $this->proveSecondFactor($oAccount)) {
+				return $this->jsonResponse(__FUNCTION__, false);
+			}
+			$aExisting = $this->loadRecord($oAccount) ?? $aExisting;
+		}
 
 		$sSecret = $this->TwoFactorAuthProvider($oAccount)->CreateSecret();
 		$aCodes = TwoFactorRecord::newBackupCodes();
-		$this->saveRecord($oAccount, TwoFactorRecord::create($oAccount->Email(), $sSecret, $aCodes, $this->recordKey()));
+		$aNew = TwoFactorRecord::create($oAccount->Email(), $sSecret, $aCodes, $this->recordKey());
+		// What the TOTP does not own stays: the keys, their user handle, the
+		// pending challenges, and the lockout — a new secret is no way out of it.
+		foreach (array('PasskeysBox', 'UserHandle', 'Challenges', 'Failures', 'LockedUntil') as $sKey) {
+			$aExisting && isset($aExisting[$sKey]) && $aNew[$sKey] = $aExisting[$sKey];
+		}
+		$this->saveRecord($oAccount, $aNew);
 
 		// The only time the backup codes are ever shown: only their hashes are kept.
 		return $this->jsonResponse(__FUNCTION__, array(
@@ -487,7 +566,7 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 	{
 		$oAccount = $this->getMainAccountFromToken();
 		$aRecord = $this->loadRecord($oAccount);
-		if (!$this->TwoFactorAuthProvider($oAccount) || !$aRecord || !empty($aRecord['Enable'])) {
+		if (!$this->TwoFactorAuthProvider($oAccount) || !$aRecord || !empty($aRecord['Enable']) || empty($aRecord['SecretBox'])) {
 			return $this->jsonResponse(__FUNCTION__, false);
 		}
 		$sSecret = (string) TwoFactorRecord::unseal((string) $aRecord['SecretBox'], $this->recordKey());
@@ -508,7 +587,7 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 	{
 		$oAccount = $this->getMainAccountFromToken();
 		$aRecord = $this->loadRecord($oAccount);
-		if (!$this->TwoFactorAuthProvider($oAccount) || !$aRecord) {
+		if (!$this->TwoFactorAuthProvider($oAccount) || !$aRecord || empty($aRecord['SecretBox'])) {
 			return $this->jsonResponse(__FUNCTION__, false);
 		}
 
@@ -516,13 +595,19 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 		if ($bEnable && empty($aRecord['Tested'])) {
 			return $this->jsonResponse(__FUNCTION__, false);
 		}
+		// A code, or a security key (2.28.0).
 		if (!$bEnable && !empty($aRecord['Enable'])
-			&& 'ok' !== $this->checkCode($oAccount, $aRecord, (string) $this->jsonParam('Code', ''))) {
+			&& 'ok' !== $this->proveSecondFactor($oAccount)) {
 			return $this->jsonResponse(__FUNCTION__, false);
 		}
 
 		// checkCode() may have written the record (time step, failures): build on that one.
 		$aRecord = $this->loadRecord($oAccount) ?? $aRecord;
+		// On or off for the whole account: a security key may keep it on (2.28.0).
+		$bWasOn = TwoFactorRecord::isOn($aRecord, $this->recordKey());
+		$aNext = $aRecord;
+		$aNext['Enable'] = $bEnable;
+		$bNowOn = TwoFactorRecord::isOn($aNext, $this->recordKey());
 
 		$oActions = $this->Manager()->Actions();
 		if ($oActions->HasActionParam('EnableTwoFactor')) {
@@ -533,17 +618,17 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 		// Required before the second factor is on, not after (S-09): when the
 		// store is there and cannot be written, enabling is refused rather than
 		// left on while the main password still opens IMAP and SMTP.
-		if ($bEnable && !$this->appPasswordsRequired($oAccount, true)) {
+		$bTurnsOn = !$bWasOn && $bNowOn;
+		if ($bTurnsOn && !$this->appPasswordsRequired($oAccount, true)) {
 			return $this->jsonResponse(__FUNCTION__, false);
 		}
 
-		$aRecord['Enable'] = $bEnable;
-		$bSaved = $this->saveRecord($oAccount, $aRecord);
+		$bSaved = $this->saveRecord($oAccount, $aNext);
 		if (!$bSaved) {
-			$bEnable && $this->appPasswordsRequired($oAccount, false);
-		} else if ($bEnable) {
+			$bTurnsOn && $this->appPasswordsRequired($oAccount, false);
+		} else if ($bTurnsOn) {
 			$this->forgetRememberedDevices($oAccount);
-		} else {
+		} else if ($bWasOn && !$bNowOn) {
 			$this->appPasswordsRequired($oAccount, false);
 		}
 		return $this->jsonResponse(__FUNCTION__, $bSaved);
@@ -554,14 +639,14 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 	{
 		$oAccount = $this->getMainAccountFromToken();
 		$aRecord = $this->loadRecord($oAccount);
-		if (!$this->TwoFactorAuthProvider($oAccount) || !$aRecord) {
+		if (!$this->TwoFactorAuthProvider($oAccount) || !$aRecord || empty($aRecord['SecretBox'])) {
 			return $this->jsonResponse(__FUNCTION__, false);
 		}
 		$bOk = 'ok' === $this->checkCode($oAccount, $aRecord, (string) $this->jsonParam('Code', ''), true);
 		return $this->jsonResponse(__FUNCTION__, $bOk);
 	}
 
-	/** Removing the second factor asks for a current code, once it is on. */
+	/** Removing the second factor — TOTP and security keys — asks for a current one, once it is on. */
 	public function DoClearTwoFactorInfo() : array
 	{
 		$oAccount = $this->getMainAccountFromToken();
@@ -569,8 +654,8 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 		if (!$this->TwoFactorAuthProvider($oAccount)) {
 			return $this->jsonResponse(__FUNCTION__, false);
 		}
-		if ($aRecord && !empty($aRecord['Enable'])
-			&& 'ok' !== $this->checkCode($oAccount, $aRecord, (string) $this->jsonParam('Code', ''))) {
+		if ($aRecord && TwoFactorRecord::isOn($aRecord, $this->recordKey())
+			&& 'ok' !== $this->proveSecondFactor($oAccount)) {
 			return $this->jsonResponse(__FUNCTION__, false);
 		}
 
@@ -681,6 +766,413 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 		return false;
 	}
 
+	/* ---- security keys and passkeys (WebAuthn, 2.28.0) ---- */
+
+	/**
+	 * The WebAuthn settings, or null when security keys are off — switched
+	 * off, or with no usable origin. Nothing here comes from the request:
+	 * the origins and the relying party are the administrator's.
+	 */
+	protected function webAuthnConf() : ?array
+	{
+		if (!$this->Config()->Get('plugin', 'webauthn_enabled', false)) {
+			return null;
+		}
+		$aConf = static::parseWebAuthnConf((string) $this->Config()->Get('plugin', 'webauthn_origins', ''),
+			(string) $this->Config()->Get('plugin', 'webauthn_rp_id', ''));
+		if (!$aConf) {
+			$this->logWrite('webauthn_enabled is on, but no origin matches the relying party ID: security keys stay off', \LOG_WARNING);
+			return null;
+		}
+		$mCounter = $this->Config()->Get('plugin', 'webauthn_counter_regression', 'refuse');
+		\is_array($mCounter) && $mCounter = \reset($mCounter);
+		return $aConf + array(
+			'name' => \trim((string) $this->Config()->Get('plugin', 'otp_issuer', ''))
+				?: \trim((string) \RainLoop\Api::Config()->Get('webmail', 'title', '')) ?: $aConf['rpId'],
+			'requireUV' => (bool) $this->Config()->Get('plugin', 'webauthn_require_uv', false),
+			'max' => \max(1, \min(50, (int) $this->Config()->Get('plugin', 'webauthn_max_passkeys', 10))),
+			'ttl' => \max(30, \min(3600, (int) $this->Config()->Get('plugin', 'webauthn_challenge_ttl', 300))),
+			'counter' => 'warn' === $mCounter ? 'warn' : 'refuse'
+		);
+	}
+
+	/**
+	 * The origins (as browsers serialise them: scheme, host, port unless the
+	 * default) and the relying party ID. The rpId must be a domain — WebAuthn
+	 * forbids an IP address — and every origin kept must be that domain or
+	 * one of its subdomains; the others are dropped. Null: nothing usable.
+	 */
+	public static function parseWebAuthnConf(string $sOrigins, string $sRpId) : ?array
+	{
+		$aOrigins = array();
+		foreach (\preg_split('/[\s,;]+/', \strtolower($sOrigins), -1, PREG_SPLIT_NO_EMPTY) as $sOrigin) {
+			if (!\preg_match('#^(https?)://([a-z0-9.-]+)(?::(\d{1,5}))?/?$#', $sOrigin, $m)) {
+				continue;
+			}
+			$sPort = $m[3] ?? '';
+			if (('https' === $m[1] && '443' === $sPort) || ('http' === $m[1] && '80' === $sPort)) {
+				$sPort = '';
+			}
+			$aOrigins["{$m[1]}://{$m[2]}" . ('' === $sPort ? '' : ":{$sPort}")] = $m[2];
+		}
+		if (!$aOrigins) {
+			return null;
+		}
+		$sRpId = \strtolower(\trim($sRpId)) ?: \reset($aOrigins);
+		if (!\preg_match('/^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$/', $sRpId)
+		 || \preg_match('/^[0-9.]+$/', $sRpId)) {
+			return null;
+		}
+		$aKept = array();
+		foreach ($aOrigins as $sOrigin => $sHost) {
+			if ($sHost === $sRpId || \str_ends_with($sHost, '.' . $sRpId)) {
+				$aKept[] = $sOrigin;
+			}
+		}
+		return $aKept ? array('origins' => $aKept, 'rpId' => $sRpId) : null;
+	}
+
+	/** A short stable reference to a key, for the settings screen: not its credential id. */
+	public static function passkeyRef(string $sId) : string
+	{
+		return \substr(\hash('sha256', 'ref:' . $sId), 0, 16);
+	}
+
+	/** The browser at the login screen: its connection cookie (no session yet). */
+	protected function loginBinding() : string
+	{
+		return (string) \SnappyMail\Cookies::get(\RainLoop\Utils::CONNECTION_TOKEN);
+	}
+
+	/** The browser of a logged-in session. */
+	protected function sessionBinding() : string
+	{
+		return (string) \RainLoop\Utils::GetConnectionToken();
+	}
+
+	/** Runs $f under the account's lock; null when the lock could not be had. */
+	protected function underLock(MainAccount $oAccount, callable $f)
+	{
+		$rLock = $this->lockRecord($oAccount);
+		if (!$rLock) {
+			$this->Logger()->Write("TFA: busy for {$oAccount->Email()}");
+			return null;
+		}
+		try {
+			return $f();
+		} finally {
+			\flock($rLock, LOCK_UN);
+			\fclose($rLock);
+		}
+	}
+
+	/**
+	 * A new challenge for this account, stored under the lock: the record
+	 * written, and the challenge — or null (no record and none to create,
+	 * busy, or nothing to bind it to).
+	 */
+	protected function issueChallenge(MainAccount $oAccount, string $sPurpose, string $sBinding, array $aConf, bool $bCreate = false) : ?array
+	{
+		if ('' === $sBinding) {
+			return null;
+		}
+		return $this->underLock($oAccount, function () use ($oAccount, $sPurpose, $sBinding, $aConf, $bCreate) {
+			$aRecord = $this->loadRecord($oAccount) ?? ($bCreate ? TwoFactorRecord::blank($oAccount->Email()) : null);
+			if (!$aRecord) {
+				return null;
+			}
+			if (empty($aRecord['UserHandle'])) {
+				// Random, never the address: the authenticator may show or keep it.
+				$aRecord['UserHandle'] = TwoFactorWebAuthn::b64u(\random_bytes(16));
+			}
+			$sChallenge = TwoFactorWebAuthn::b64u(\random_bytes(32));
+			$aRecord = TwoFactorRecord::addChallenge($aRecord, $sChallenge, $sPurpose, $sBinding, \time(), $aConf['ttl'], $this->recordKey());
+			return $this->saveRecord($oAccount, $aRecord) ? array($aRecord, $sChallenge) : null;
+		});
+	}
+
+	/** PublicKeyCredentialRequestOptions, as JSON-friendly values (base64url). */
+	protected static function requestOptions(array $aKeys, string $sChallenge, array $aConf) : array
+	{
+		return array(
+			'challenge' => $sChallenge,
+			'rpId' => $aConf['rpId'],
+			'timeout' => $aConf['ttl'] * 1000,
+			'userVerification' => $aConf['requireUV'] ? 'required' : 'discouraged',
+			'allowCredentials' => \array_map(fn ($k) => array('type' => 'public-key', 'id' => (string) $k['Id']), \array_values($aKeys))
+		);
+	}
+
+	/**
+	 * After a right password and no second factor: the request options of
+	 * the account's keys, appended to the name of the refusal — or '' when
+	 * the account has none, or keys are off.
+	 */
+	protected function loginKeyOptions(MainAccount $oAccount) : string
+	{
+		$aConf = $this->webAuthnConf();
+		$aRecord = $this->loadRecord($oAccount);
+		$aKeys = $aRecord ? TwoFactorRecord::passkeys($aRecord, $this->recordKey()) : null;
+		if (!$aConf || !$aKeys) {
+			return '';
+		}
+		$a = $this->issueChallenge($oAccount, 'login', $this->loginBinding(), $aConf);
+		return $a ? ':' . TwoFactorWebAuthn::b64u(\json_encode(static::requestOptions($aKeys, $a[1], $aConf))) : '';
+	}
+
+	/**
+	 * One assertion, checked and recorded like a code: under the lock, the
+	 * challenge spent whatever the outcome, failures counted toward the same
+	 * lockout, the key's counter and last use stored on success.
+	 *
+	 * @return string 'ok', 'locked', 'busy', 'unavailable' or 'webauthn-<reason>'
+	 */
+	protected function checkAssertion(MainAccount $oAccount, string $sJson, string $sPurpose, string $sBinding) : string
+	{
+		$aConf = $this->webAuthnConf();
+		if (!$aConf || '' === $sBinding) {
+			$this->Logger()->Write("TFA: security key unavailable for {$oAccount->Email()}");
+			return 'unavailable';
+		}
+		$sOutcome = $this->underLock($oAccount, function () use ($oAccount, $sJson, $sPurpose, $sBinding, $aConf) {
+			$aRecord = $this->loadRecord($oAccount);
+			if (!$aRecord) {
+				return 'webauthn-unknown-credential';
+			}
+			$iNow = \time();
+			if (TwoFactorRecord::isLocked($aRecord, $iNow)) {
+				return 'locked';
+			}
+			$sKey = $this->recordKey();
+			try {
+				$aCredential = TwoFactorWebAuthn::decodeCredential($sJson);
+				$sPresented = TwoFactorWebAuthn::presentedChallenge($aCredential);
+				[$bUsable, $aRecord] = TwoFactorRecord::takeChallenge($aRecord, $sPresented, $sPurpose, $sBinding, $iNow, $sKey);
+				$aKeys = TwoFactorRecord::passkeys($aRecord, $sKey) ?? array();
+				$aResult = TwoFactorWebAuthn::assert($aCredential, array(
+					'challenge' => $bUsable ? $sPresented : null,
+					'userHandle' => (string) ($aRecord['UserHandle'] ?? '')
+				) + $aConf, $aKeys);
+			} catch (TwoFactorWebAuthnError $oError) {
+				$this->saveRecord($oAccount, TwoFactorRecord::recordFailure($aRecord, $iNow));
+				return 'webauthn-' . $oError->getMessage();
+			}
+			if ($aResult['regression']) {
+				$this->Logger()->Write("TFA: signature counter went back for {$oAccount->Email()}, accepted (webauthn_counter_regression = warn)");
+			}
+			$aKeys[$aResult['index']]['SignCount'] = $aResult['signCount'];
+			$aKeys[$aResult['index']]['LastUsed'] = $iNow;
+			$aRecord = TwoFactorRecord::recordSuccess(TwoFactorRecord::withPasskeys($aRecord, $aKeys, $sKey), null);
+			return $this->saveRecord($oAccount, $aRecord) ? 'ok' : 'busy';
+		}) ?? 'busy';
+		$this->Logger()->Write("TFA: {$sOutcome} for {$oAccount->Email()} (security key, {$sPurpose})");
+		return $sOutcome;
+	}
+
+	/**
+	 * A current second factor, for what weakens it (switching off, removing,
+	 * adding another): a security key's assertion when one is sent, else a
+	 * code. Counted and locked like a login.
+	 */
+	protected function proveSecondFactor(MainAccount $oAccount) : string
+	{
+		$sAssertion = \trim((string) $this->jsonParam('Assertion', ''));
+		return '' !== $sAssertion
+			? $this->checkAssertion($oAccount, $sAssertion, 'reauth', $this->sessionBinding())
+			: $this->checkCode($oAccount, array(), (string) $this->jsonParam('Code', ''));
+	}
+
+	/** A key's name as the person typed it: no control or bidi-override characters, 64 at most. */
+	public static function passkeyName(string $sName) : string
+	{
+		$sName = (string) \preg_replace('/[\p{C}]+/u', '', \mb_convert_encoding($sName, 'UTF-8', 'UTF-8'));
+		return \mb_substr(\trim((string) \preg_replace('/\s+/u', ' ', $sName)), 0, 64);
+	}
+
+	/** PublicKeyCredentialCreationOptions for a new key of this account. */
+	public function DoWebAuthnCreateOptions() : array
+	{
+		$oAccount = $this->getMainAccountFromToken();
+		$aConf = $this->webAuthnConf();
+		if (!$aConf) {
+			return $this->jsonResponse(__FUNCTION__, false);
+		}
+		$aRecord = $this->loadRecord($oAccount);
+		$aKeys = $aRecord ? TwoFactorRecord::passkeys($aRecord, $this->recordKey()) : array();
+		if (null === $aKeys || \count($aKeys) >= $aConf['max']) {
+			return $this->jsonResponse(__FUNCTION__, false);
+		}
+		$a = $this->issueChallenge($oAccount, 'register', $this->sessionBinding(), $aConf, true);
+		if (!$a) {
+			return $this->jsonResponse(__FUNCTION__, false);
+		}
+		return $this->jsonResponse(__FUNCTION__, array(
+			'rp' => array('id' => $aConf['rpId'], 'name' => $aConf['name']),
+			'user' => array('id' => $a[0]['UserHandle'], 'name' => $oAccount->Email(), 'displayName' => $oAccount->Email()),
+			'challenge' => $a[1],
+			'pubKeyCredParams' => \array_map(fn ($i) => array('type' => 'public-key', 'alg' => $i), TwoFactorWebAuthn::algorithms()),
+			'timeout' => $aConf['ttl'] * 1000,
+			'excludeCredentials' => \array_map(fn ($k) => array('type' => 'public-key', 'id' => (string) $k['Id']), $aKeys),
+			'authenticatorSelection' => array(
+				'userVerification' => $aConf['requireUV'] ? 'required' : 'discouraged',
+				// A second factor needs no key stored on the authenticator:
+				// a security key's few resident slots are left alone.
+				'residentKey' => 'discouraged',
+				'requireResidentKey' => false
+			),
+			'attestation' => 'none'
+		));
+	}
+
+	/**
+	 * Registers a key. When a second factor is already on, a current one is
+	 * required first (code or key): a stolen session must not add its own.
+	 * The first factor of an account also gets backup codes, shown once.
+	 */
+	public function DoWebAuthnRegister() : array
+	{
+		$oAccount = $this->getMainAccountFromToken();
+		$aConf = $this->webAuthnConf();
+		$sBinding = $this->sessionBinding();
+		$aRecord = $this->loadRecord($oAccount);
+		if (!$aConf || '' === $sBinding || !$aRecord) {
+			return $this->jsonResponse(__FUNCTION__, false);
+		}
+		$sKey = $this->recordKey();
+		$bWasOn = TwoFactorRecord::isOn($aRecord, $sKey);
+		if ($bWasOn && 'ok' !== $this->proveSecondFactor($oAccount)) {
+			return $this->jsonResponse(__FUNCTION__, false);
+		}
+		$sName = static::passkeyName((string) $this->jsonParam('Name', ''));
+		$aCodes = array();
+		$sOutcome = $this->underLock($oAccount, function () use ($oAccount, $aConf, $sBinding, $sKey, $bWasOn, $sName, &$aCodes) {
+			$aRecord = $this->loadRecord($oAccount);
+			$aKeys = $aRecord ? TwoFactorRecord::passkeys($aRecord, $sKey) : null;
+			if (null === $aKeys) {
+				return 'unreadable';
+			}
+			$iNow = \time();
+			try {
+				$aCredential = TwoFactorWebAuthn::decodeCredential((string) $this->jsonParam('Credential', ''));
+				$sPresented = TwoFactorWebAuthn::presentedChallenge($aCredential);
+				[$bUsable, $aRecord] = TwoFactorRecord::takeChallenge($aRecord, $sPresented, 'register', $sBinding, $iNow, $sKey);
+				$aNew = TwoFactorWebAuthn::register($aCredential, array('challenge' => $bUsable ? $sPresented : null) + $aConf);
+			} catch (TwoFactorWebAuthnError $oError) {
+				$this->saveRecord($oAccount, $aRecord);
+				return 'webauthn-' . $oError->getMessage();
+			}
+			if (\count($aKeys) >= $aConf['max']) {
+				$this->saveRecord($oAccount, $aRecord);
+				return 'max';
+			}
+			foreach ($aKeys as $k) {
+				if (\hash_equals((string) ($k['Id'] ?? ''), $aNew['Id'])) {
+					$this->saveRecord($oAccount, $aRecord);
+					return 'duplicate';
+				}
+			}
+			$aKeys[] = $aNew + array(
+				'Name' => '' === $sName ? 'Key ' . (\count($aKeys) + 1) : $sName,
+				'Created' => $iNow,
+				'LastUsed' => 0
+			);
+			// Required before the second factor is on (S-09), as for the TOTP.
+			if (!$bWasOn && !$this->appPasswordsRequired($oAccount, true)) {
+				$this->saveRecord($oAccount, $aRecord);
+				return 'app-passwords';
+			}
+			$aNext = TwoFactorRecord::withPasskeys($aRecord, $aKeys, $sKey);
+			if (empty($aNext['BackupHashes'])) {
+				// Without them, a lost key is a lost mailbox.
+				$aCodes = TwoFactorRecord::newBackupCodes();
+				$aNext['BackupHashes'] = \array_map(fn ($s) => TwoFactorRecord::hashCode($s, $sKey), $aCodes);
+			}
+			if (!$this->saveRecord($oAccount, $aNext)) {
+				$bWasOn || $this->appPasswordsRequired($oAccount, false);
+				$aCodes = array();
+				return 'busy';
+			}
+			return 'ok';
+		}) ?? 'busy';
+		$this->Logger()->Write("TFA: security key registration {$sOutcome} for {$oAccount->Email()}");
+		if ('ok' !== $sOutcome) {
+			return $this->jsonResponse(__FUNCTION__, false);
+		}
+		$bWasOn || $this->forgetRememberedDevices($oAccount);
+		$aInfo = $this->getTwoFactorInfo($oAccount, true);
+		// The only time these backup codes are shown.
+		$aCodes && $aInfo['BackupCodes'] = \implode(' ', $aCodes);
+		return $this->jsonResponse(__FUNCTION__, $aInfo);
+	}
+
+	/** Request options to confirm, with a key, what weakens the second factor. */
+	public function DoWebAuthnAssertOptions() : array
+	{
+		$oAccount = $this->getMainAccountFromToken();
+		$aConf = $this->webAuthnConf();
+		$aRecord = $this->loadRecord($oAccount);
+		$aKeys = $aRecord ? TwoFactorRecord::passkeys($aRecord, $this->recordKey()) : null;
+		$a = $aConf && $aKeys ? $this->issueChallenge($oAccount, 'reauth', $this->sessionBinding(), $aConf) : null;
+		return $this->jsonResponse(__FUNCTION__, $a ? static::requestOptions($aKeys, $a[1], $aConf) : false);
+	}
+
+	/** Renames a key: the session is enough, nothing is weakened. */
+	public function DoWebAuthnRename() : array
+	{
+		$oAccount = $this->getMainAccountFromToken();
+		$sRef = (string) $this->jsonParam('Ref', '');
+		$sName = static::passkeyName((string) $this->jsonParam('Name', ''));
+		if ('' === $sName) {
+			return $this->jsonResponse(__FUNCTION__, false);
+		}
+		$bDone = $this->underLock($oAccount, fn () => $this->editPasskeys($oAccount, $sRef, function (array $aKeys, int $i) use ($sName) {
+			$aKeys[$i]['Name'] = $sName;
+			return $aKeys;
+		}));
+		return $this->jsonResponse(__FUNCTION__, $bDone ? $this->getTwoFactorInfo($oAccount, true) : false);
+	}
+
+	/** Removes a key, with a current second factor — this one included. */
+	public function DoWebAuthnRemove() : array
+	{
+		$oAccount = $this->getMainAccountFromToken();
+		$sRef = (string) $this->jsonParam('Ref', '');
+		$aRecord = $this->loadRecord($oAccount);
+		if (!$aRecord || 'ok' !== $this->proveSecondFactor($oAccount)) {
+			return $this->jsonResponse(__FUNCTION__, false);
+		}
+		$bDone = $this->underLock($oAccount, fn () => $this->editPasskeys($oAccount, $sRef, function (array $aKeys, int $i) {
+			unset($aKeys[$i]);
+			return \array_values($aKeys);
+		}));
+		if (!$bDone) {
+			return $this->jsonResponse(__FUNCTION__, false);
+		}
+		$this->Logger()->Write("TFA: security key removed for {$oAccount->Email()}");
+		$aRecord = $this->loadRecord($oAccount);
+		if (!$aRecord || !TwoFactorRecord::isOn($aRecord, $this->recordKey())) {
+			// The last factor gone: mail apps take the password again.
+			$this->appPasswordsRequired($oAccount, false);
+		}
+		return $this->jsonResponse(__FUNCTION__, $this->getTwoFactorInfo($oAccount, true));
+	}
+
+	/** Applies $f to the key list at the key referenced by $sRef; to be called under the lock. */
+	protected function editPasskeys(MainAccount $oAccount, string $sRef, callable $f) : bool
+	{
+		$aRecord = $this->loadRecord($oAccount);
+		$aKeys = $aRecord ? TwoFactorRecord::passkeys($aRecord, $this->recordKey()) : null;
+		if (!$aKeys || '' === $sRef) {
+			return false;
+		}
+		foreach ($aKeys as $i => $k) {
+			if (\hash_equals(static::passkeyRef((string) ($k['Id'] ?? '')), $sRef)) {
+				return $this->saveRecord($oAccount, TwoFactorRecord::withPasskeys($aRecord, $f($aKeys, $i), $this->recordKey()));
+			}
+		}
+		return false;
+	}
+
 	/* ---- the record ---- */
 
 	protected function recordKey() : string
@@ -706,7 +1198,7 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 		);
 		$mData = $sData ? static::DecodeKeyValues($sData) : array();
 		if (empty($mData['User']) || $sEmail !== $mData['User']
-			|| (empty($mData['Secret']) && empty($mData['SecretBox']))) {
+			|| (empty($mData['Secret']) && empty($mData['SecretBox']) && empty($mData['PasskeysBox']) && empty($mData['UserHandle']))) {
 			return null;
 		}
 		return TwoFactorRecord::normalise($mData, $this->recordKey());
@@ -749,8 +1241,12 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 				return 'wrong';
 			}
 			$oProvider = $this->TwoFactorAuthProvider($oAccount);
+			// A TOTP code counts once the TOTP is on, or while it is being
+			// tested. A secret created next to a security key and never
+			// tested is not a second factor yet (2.28.0); backup codes are.
+			$bTotp = $bMarkTested || !empty($aRecord['Enable']);
 			[$sOutcome, $aNew] = TwoFactorRecord::check($aRecord, $sCode, $this->recordKey(), \time(),
-				fn (string $sSecret, string $s) => $oProvider->MatchingSlice($sSecret, $s));
+				fn (string $sSecret, string $s) => $bTotp ? $oProvider->MatchingSlice($sSecret, $s) : null);
 			if ('ok' === $sOutcome && $bMarkTested) {
 				$aNew['Tested'] = true;
 			}
@@ -819,15 +1315,33 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 		return $this->oTwoFactorAuthProvider;
 	}
 
-	/** What the settings screen may know: never the secret, the codes or the QR code. */
+	/**
+	 * What the settings screen may know: never the secret, the codes or the
+	 * QR code, and of the security keys only their name and dates — not the
+	 * public key, not the credential id.
+	 */
 	protected function getTwoFactorInfo(MainAccount $oAccount, bool $bRemoveSecret = false) : array
 	{
 		$aRecord = $this->loadRecord($oAccount);
+		$aConf = $this->webAuthnConf();
+		$aKeys = $aRecord ? (TwoFactorRecord::passkeys($aRecord, $this->recordKey()) ?? array()) : array();
 		return array(
 			'User' => $oAccount->Email(),
-			'IsSet' => null !== $aRecord,
+			'IsSet' => $aRecord && !empty($aRecord['SecretBox']),
 			'Enable' => $aRecord ? !empty($aRecord['Enable']) : false,
-			'Tested' => $aRecord ? !empty($aRecord['Tested']) : false
+			'Tested' => $aRecord ? !empty($aRecord['Tested']) : false,
+			// 2.28.0: the second factor of the account, whichever it is.
+			'On' => $aRecord && TwoFactorRecord::isOn($aRecord, $this->recordKey()),
+			'Enrolled' => $aRecord && TwoFactorRecord::hasFactor($aRecord, $this->recordKey()),
+			'WebAuthn' => null !== $aConf,
+			'MaxPasskeys' => $aConf ? $aConf['max'] : 0,
+			'Passkeys' => \array_map(fn ($k) => array(
+				// A reference, not the credential id: the screen has no use for it.
+				'Ref' => static::passkeyRef((string) ($k['Id'] ?? '')),
+				'Name' => (string) ($k['Name'] ?? ''),
+				'Created' => (int) ($k['Created'] ?? 0),
+				'LastUsed' => (int) ($k['LastUsed'] ?? 0)
+			), $aKeys)
 		);
 	}
 

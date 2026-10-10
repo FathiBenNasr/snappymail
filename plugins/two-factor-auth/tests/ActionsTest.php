@@ -1,6 +1,6 @@
 <?php
 /**
- * two-factor-auth 2.27.0 — the actions, through the real plugin class, with
+ * two-factor-auth 2.28.0 — the actions, through the real plugin class, with
  * the core reduced to what the plugin touches.
  *
  * Run: php plugins/two-factor-auth/tests/ActionsTest.php (from the snappymail tree)
@@ -67,6 +67,7 @@ namespace {
 	require __DIR__ . '/../../../snappymail/v/0.0.0/app/libraries/snappymail/totp.php';
 	require __DIR__ . '/../../../snappymail/v/0.0.0/app/libraries/snappymail/qrcode.php';
 	require __DIR__ . '/../index.php';
+	require __DIR__ . '/authenticator.php';
 
 	// Like the core's: an address string is its own account's storage; a
 	// directory per account and type on disk, for the lock and the sign-me tokens.
@@ -107,6 +108,13 @@ namespace {
 		public function stored() : array { return $this->loadRecord($this->oAccount); }
 		public function lockFile() : string { return $this->lockPath($this->oAccount); }
 		public function shortWait() : void { $this->fLockWait = 0.2; }
+		/** The browser: its connection token, at the login screen and in the session. */
+		public string $binding = 'browser-1';
+		protected function loginBinding() : string { return $this->binding; }
+		protected function sessionBinding() : string { return $this->binding; }
+		/** The stored JSON, as a file on disk would be read and written by someone else. */
+		public function raw() : array { return \json_decode($this->oStore->data[$this->oAccount->Email()], true); }
+		public function setRaw(array $a) : void { $this->oStore->data[$this->oAccount->Email()] = \json_encode($a); }
 		protected function Logger() : \MailSo\Log\Logger { return new \MailSo\Log\Logger($this); }
 		protected function getMainAccountFromToken() : \RainLoop\Model\MainAccount { return $this->oAccount; }
 		protected function StorageProvider() : \RainLoop\Providers\Storage { return new \RainLoop\Providers\Storage($this->oStore); }
@@ -138,7 +146,9 @@ namespace {
 	$check('creation shows the secret, the QR with the service name, and 8 codes once',
 		array(\strlen($sSecret) >= 16, \str_starts_with($c['QRCode'], 'data:image/svg+xml;base64,'), \count(\explode(' ', $c['BackupCodes']))), array(true, true, 8));
 	$check('the stored record holds neither', \str_contains(\reset($p->oStore->data), $sSecret), false);
-	$check('the info screen never sees secret, codes or QR', \array_keys($p->DoGetTwoFactorInfo()['Result']), array('User', 'IsSet', 'Enable', 'Tested'));
+	$aInfo = $p->DoGetTwoFactorInfo()['Result'];
+	$check('the info screen never sees secret, codes or QR', \array_keys($aInfo), array('User', 'IsSet', 'Enable', 'Tested', 'On', 'Enrolled', 'WebAuthn', 'MaxPasskeys', 'Passkeys'));
+	$check('… nor anything secret-shaped in its values', \preg_match('/' . \preg_quote($sSecret, '/') . '|BackupHashes|SecretBox/', \json_encode($aInfo)), 0);
 
 	$p->params = array('Enable' => '1');
 	$check('cannot switch on before the phone was tested', $p->DoEnableTwoFactor()['Result'], false);
@@ -398,6 +408,245 @@ namespace {
 	$check('configured services: Raw, not listed, is refused whole', $chemin($k, array('Raw', '0', 'Download', 'k')), array('TwoFactorSetupRequired'));
 	$k->config['setup_allowed_actions'] = '  ';
 	$check('an empty list is the measured default (DoFolders passes)', $verdict($k, 'DoFolders'), 'passe');
+
+	/* ---- 2.28.0: security keys and passkeys (WebAuthn) as a second factor ---- */
+	$WA = array('webauthn_enabled' => true, 'webauthn_origins' => 'https://webmail.smail.tn', 'webauthn_rp_id' => 'smail.tn');
+	$inscrire = function (P $x, SoftAuthenticator $k, array $aProof = array(), array $o = array()) {
+		$x->params = array();
+		$aOpt = $x->DoWebAuthnCreateOptions()['Result'];
+		if (!$aOpt) { return 'no options'; }
+		$x->params = $aProof + array('Name' => $o['name'] ?? 'YubiKey', 'Credential' => \json_encode($k->create($aOpt['challenge'], $o)));
+		return $x->DoWebAuthnRegister()['Result'];
+	};
+	$connexion = function (P $x, array $aParams) : string {
+		$x->params = $aParams;
+		try { $x->DoLogin($x->oAccount); return 'ok'; }
+		catch (\RainLoop\Exceptions\ClientException $e) { return 'refused:' . \explode(':', $e->getAdditionalMessage())[0]; }
+	};
+	$optionsConnexion = function (P $x) : ?array {
+		$x->params = array();
+		try { $x->DoLogin($x->oAccount); return null; }
+		catch (\RainLoop\Exceptions\ClientException $e) {
+			$m = $e->getAdditionalMessage();
+			return \str_starts_with($m, 'TwoFactorCodeRequired:') ? \json_decode(TwoFactorWebAuthn::unb64u(\substr($m, 22)), true) : null;
+		}
+	};
+	$cle = fn (P $x, SoftAuthenticator $k, array $o = array()) => array('webauthn_assertion' => \json_encode($k->get($optionsConnexion($x)['challenge'] ?? 'none', $o)));
+	$preuve = function (P $x, SoftAuthenticator $k, array $o = array()) {
+		$x->params = array();
+		$aOpt = $x->DoWebAuthnAssertOptions()['Result'];
+		return array('Assertion' => \json_encode($k->get($aOpt ? $aOpt['challenge'] : 'none', $o)));
+	};
+	$dernier = fn (P $x, string $s) => (bool) \array_filter($x->log, fn ($l) => \str_contains($l, $s));
+	// Each refusal above counts toward the lockout (five in fifteen minutes): cleared between groups.
+	$deverrouiller = function (P $x) { $a = $x->raw(); $a['Failures'] = array(); $a['LockedUntil'] = 0; $x->setRaw($a); };
+
+	// Off by default, and off without an origin.
+	$d = new P();
+	$check('security keys: off by default, no options are issued', $d->DoWebAuthnCreateOptions()['Result'], false);
+	$check('security keys: the settings screen is told so', $d->DoGetTwoFactorInfo()['Result']['WebAuthn'], false);
+	$d->config = array('webauthn_enabled' => true);
+	$check('security keys: switched on without an origin, still off (the Host header is never used)', $d->DoWebAuthnCreateOptions()['Result'], false);
+
+	$check('config: origins as browsers serialise them (default port dropped, case), rpId from the first',
+		TwoFactorAuthPlugin::parseWebAuthnConf("https://Webmail.smail.tn:443/\nhttp://10.0.0.1", ''), array('origins' => array('https://webmail.smail.tn'), 'rpId' => 'webmail.smail.tn'));
+	$check('config: a parent domain as rpId keeps its subdomains, drops the others',
+		TwoFactorAuthPlugin::parseWebAuthnConf('https://webmail.smail.tn, https://mail.smail.tn:8443 https://smail.tn.evil.com', 'smail.tn'),
+		array('origins' => array('https://webmail.smail.tn', 'https://mail.smail.tn:8443'), 'rpId' => 'smail.tn'));
+	$check('config: an IP address cannot be an rpId (WebAuthn forbids it)', TwoFactorAuthPlugin::parseWebAuthnConf('http://10.89.10.1:8932', ''), null);
+	$check('config: an rpId the origins are not under', TwoFactorAuthPlugin::parseWebAuthnConf('https://smail.tn', 'mail.smail.tn'), null);
+	$check('config: no origin, no keys', TwoFactorAuthPlugin::parseWebAuthnConf('', 'smail.tn'), null);
+	$check('a key\'s name: control and bidi-override characters removed, 64 at most',
+		array(TwoFactorAuthPlugin::passkeyName("Yubi\u{202E}yeK\x07 \n bureau"), \mb_strlen(TwoFactorAuthPlugin::passkeyName(\str_repeat('é', 100)))), array('YubiyeK bureau', 64));
+
+	// The first factor of an account: a key.
+	$w = new P();
+	$w->config = $WA;
+	$kW = new SoftAuthenticator(-7);
+	$w->params = array();
+	$aOpt = $w->DoWebAuthnCreateOptions()['Result'];
+	$check('creation options: the relying party, attestation "none", no key stored on the authenticator',
+		array($aOpt['rp']['id'], $aOpt['attestation'], $aOpt['authenticatorSelection']['residentKey'], $aOpt['excludeCredentials']), array('smail.tn', 'none', 'discouraged', array()));
+	$check('creation options: ES256, EdDSA and RS256 offered', \array_column($aOpt['pubKeyCredParams'], 'alg'), array(-7, -8, -257));
+	$check('creation options: the user handle is random, never the address', array($aOpt['user']['name'], \str_contains(TwoFactorWebAuthn::unb64u($aOpt['user']['id']), 'rym')), array('rym@smail.tn', false));
+	$w->params = array('Name' => 'YubiKey bleue', 'Credential' => \json_encode($kW->create($aOpt['challenge'])));
+	$aR = $w->DoWebAuthnRegister()['Result'];
+	$check('registered: the second factor is on, with this key', array($aR['On'], $aR['Enrolled'], \count($aR['Passkeys']), $aR['Passkeys'][0]['Name']), array(true, true, 1, 'YubiKey bleue'));
+	$check('registered first: eight backup codes, shown this once', \count(\explode(' ', $aR['BackupCodes'] ?? '')), 8);
+	$aBackupW = \explode(' ', $aR['BackupCodes']);
+	$check('the settings screen gets a reference, never the credential id nor the key', \array_keys($aR['Passkeys'][0]), array('Ref', 'Name', 'Created', 'LastUsed'));
+	$sRaw = $w->oStore->data['rym@smail.tn'];
+	$check('stored sealed: neither the credential id nor the name appear in the record', array(\str_contains($sRaw, SoftAuthenticator::b64u($kW->credentialId)), \str_contains($sRaw, 'YubiKey')), array(false, false));
+	$w->params = array('Name' => 'again', 'Credential' => \json_encode($kW->create($aOpt['challenge'])));
+	$check('the registration challenge is spent: the same answer again is refused', $w->DoWebAuthnRegister()['Result'], false);
+	$w->params = array();
+	$check('the next options exclude the key already registered', \count($w->DoWebAuthnCreateOptions()['Result']['excludeCredentials']), 1);
+
+	// Login.
+	$check('login without a factor: refused, named', $connexion($w, array()), 'refused:TwoFactorCodeRequired');
+	$aLogin = $optionsConnexion($w);
+	$check('… and the request options follow the name, for this account\'s key', array($aLogin['rpId'], \array_column($aLogin['allowCredentials'], 'id')), array('smail.tn', array(SoftAuthenticator::b64u($kW->credentialId))));
+	$aAssertion = $kW->get($aLogin['challenge']);
+	$check('login with the key: accepted', $connexion($w, array('webauthn_assertion' => \json_encode($aAssertion))), 'ok');
+	$check('… and its last use is recorded', $w->DoGetTwoFactorInfo()['Result']['Passkeys'][0]['LastUsed'] > 0, true);
+	$check('the same assertion replayed: refused (challenge spent)', $connexion($w, array('webauthn_assertion' => \json_encode($aAssertion))), 'refused:');
+	$check('… logged as such', $dernier($w, 'webauthn-challenge'), true);
+	$check('wrong origin: refused', $connexion($w, $cle($w, $kW, array('origin' => 'https://webmail-smail.tn'))), 'refused:');
+	$check('… logged as such', $dernier($w, 'webauthn-origin'), true);
+	$check('wrong rpId: refused', $connexion($w, $cle($w, $kW, array('rpId' => 'evil.tn'))), 'refused:');
+	$aLogin = $optionsConnexion($w);
+	$sBad = \json_encode($kW->get($aLogin['challenge'], array('origin' => 'https://evil.tn')));
+	$connexion($w, array('webauthn_assertion' => $sBad));
+	$check('a failed attempt spends the challenge: a good answer to it is refused afterwards',
+		$connexion($w, array('webauthn_assertion' => \json_encode($kW->get($aLogin['challenge'])))), 'refused:');
+	$aLogin = $optionsConnexion($w);
+	$w->binding = 'browser-2';
+	$check('a challenge issued to one browser, answered from another: refused', $connexion($w, array('webauthn_assertion' => \json_encode($kW->get($aLogin['challenge'])))), 'refused:');
+	$w->binding = 'browser-1';
+	$aLogin = $optionsConnexion($w);
+	$aRaw = $w->raw(); foreach ($aRaw['Challenges'] as &$c) { $c['e'] = \time() - 1; } unset($c); $w->setRaw($aRaw);
+	$check('an expired challenge: refused', $connexion($w, array('webauthn_assertion' => \json_encode($kW->get($aLogin['challenge'])))), 'refused:');
+	$check('a challenge issued at login cannot confirm a removal',
+		(function () use ($w, $kW, $optionsConnexion) { $a = $optionsConnexion($w); $w->params = array('Ref' => $w->DoGetTwoFactorInfo()['Result']['Passkeys'][0]['Ref'], 'Assertion' => \json_encode($kW->get($a['challenge']))); return $w->DoWebAuthnRemove()['Result']; })(), false);
+	$check('the refusals above count: the second factor is now locked', $dernier($w, 'TFA: locked for rym@smail.tn'), true);
+	$deverrouiller($w);
+	$check('a six-digit code is no factor for an account without TOTP', $connexion($w, array('totp_code' => '123456')), 'refused:');
+	$check('a backup code logs in', $connexion($w, array('totp_code' => $aBackupW[0])), 'ok');
+	$check('the key of another account is refused for this one',
+		(function () use ($inscrire, $WA, $w, $connexion, $optionsConnexion) {
+			$b = new P(); $b->oStore = $w->oStore; $b->config = $WA; $b->oAccount = new \RainLoop\Model\MainAccount('sana@smail.tn');
+			$kB = new SoftAuthenticator(-7); $inscrire($b, $kB);
+			return $connexion($w, array('webauthn_assertion' => \json_encode($kB->get($optionsConnexion($w)['challenge']))));
+		})(), 'refused:');
+	$check('… logged as an unknown credential', $dernier($w, 'webauthn-unknown-credential'), true);
+	$check('S-22: an additional account with a key is refused', (function () use ($w) {
+		try { $w->FilterAccount(new \RainLoop\Model\AdditionalAccount('sana@smail.tn')); return 'accepted'; }
+		catch (\RainLoop\Exceptions\ClientException $e) { return $e->getAdditionalMessage(); } })(), 'TwoFactorNotAdditional');
+
+	// The signature counter.
+	$deverrouiller($w);
+	$check('a counter that goes back: refused', $connexion($w, $cle($w, $kW, array('counter' => 1))), 'refused:');
+	$check('… logged as such', $dernier($w, 'webauthn-counter'), true);
+	$w->config['webauthn_counter_regression'] = 'warn';
+	$check('with the setting on "warn": accepted', $connexion($w, $cle($w, $kW, array('counter' => 1))), 'ok');
+	$check('… and logged', $dernier($w, 'signature counter went back'), true);
+	unset($w->config['webauthn_counter_regression']);
+	$kW->counter = 100;
+
+	// Failures count toward the same lockout as wrong codes.
+	$deverrouiller($w);
+	$w->log = array();
+	for ($i = 0; $i < 5; ++$i) { $connexion($w, $cle($w, $kW, array('signature' => 'not a signature'))); }
+	$check('five bad assertions lock the second factor: then even a good one is refused', $connexion($w, $cle($w, $kW)), 'refused:');
+	$check('… as locked', $dernier($w, 'TFA: locked for rym@smail.tn'), true);
+	$deverrouiller($w);
+
+	// Settings: rename, add another, remove — the last two with a current factor.
+	$sRef = $w->DoGetTwoFactorInfo()['Result']['Passkeys'][0]['Ref'];
+	$w->params = array('Ref' => $sRef, 'Name' => "Clé du bureau \u{202E}");
+	$check('rename: the session is enough', $w->DoWebAuthnRename()['Result']['Passkeys'][0]['Name'], 'Clé du bureau');
+	$w->params = array('Ref' => 'nope', 'Name' => 'x');
+	$check('rename: an unknown reference changes nothing', $w->DoWebAuthnRename()['Result'], false);
+	$kW2 = new SoftAuthenticator(-8);
+	$check('a second key without a current factor: refused (a stolen session must not add its own)', $inscrire($w, $kW2), false);
+	$aR = $inscrire($w, $kW2, $preuve($w, $kW), array('name' => 'Téléphone'));
+	$check('a second key, confirmed with the first: registered, and no new backup codes', array(\count($aR['Passkeys']), isset($aR['BackupCodes'])), array(2, false));
+	$check('the same authenticator twice: refused', $inscrire($w, $kW2, $preuve($w, $kW)), false);
+	$w->config['webauthn_max_passkeys'] = 2;
+	$w->params = array();
+	$check('at the maximum per account: no more options', $w->DoWebAuthnCreateOptions()['Result'], false);
+	unset($w->config['webauthn_max_passkeys']);
+	$check('the second key (EdDSA) logs in', $connexion($w, $cle($w, $kW2)), 'ok');
+	$sRef2 = $w->DoGetTwoFactorInfo()['Result']['Passkeys'][1]['Ref'];
+	$w->params = array('Ref' => $sRef2);
+	$check('removing a key without a factor: refused', $w->DoWebAuthnRemove()['Result'], false);
+	$w->params = array('Ref' => $sRef2, 'Code' => '000000000');
+	$check('removing a key with a wrong code: refused', $w->DoWebAuthnRemove()['Result'], false);
+	$w->params = array('Ref' => $sRef2) + $preuve($w, $kW2);
+	$check('removing a key with its own assertion: removed', \count($w->DoWebAuthnRemove()['Result']['Passkeys']), 1);
+
+	// A TOTP next to a key: added only with a current factor, and a code only once tested.
+	$w->params = array();
+	$check('a TOTP next to a key, without a current factor: refused', $w->DoCreateTwoFactorSecret()['Result'], false);
+	$w->params = $preuve($w, $kW);
+	$cW = $w->DoCreateTwoFactorSecret()['Result'];
+	$check('… with the key: created, and the key kept', array(\strlen($cW['Secret']) >= 16, \count($w->DoGetTwoFactorInfo()['Result']['Passkeys'])), array(true, 1));
+	$check('an untested TOTP is not yet a factor at login', $connexion($w, array('totp_code' => $current($cW['Secret']))), 'refused:');
+	$w->params = array('Code' => $previous($cW['Secret'])); $w->DoVerifyTwoFactorCode();
+	$w->params = array('Enable' => '1');
+	$check('tested, it switches on', $w->DoEnableTwoFactor()['Result'], true);
+	\sleep(0);
+	$check('the key still logs in next to it', $connexion($w, $cle($w, $kW)), 'ok');
+	$w->params = array('Enable' => '0') + $preuve($w, $kW);
+	$check('switching the TOTP off with the key: off, and the account stays protected by the key',
+		array($w->DoEnableTwoFactor()['Result'], $w->DoGetTwoFactorInfo()['Result']['On']), array(true, true));
+	$w->params = $preuve($w, $kW);
+	$aC = $w->DoClearTwoFactorInfo()['Result'];
+	$check('clearing everything with the key: nothing left', array($aC['On'], $aC['Passkeys']), array(false, array()));
+	$check('… and the login asks for nothing more', $connexion($w, array()), 'ok');
+
+	// Enforcement (2.27.0): a key is enrolment, through the allowed actions.
+	$e = new P();
+	$e->config = $WA + array('force_two_factor_domains' => 'smail.tn');
+	$check('required, not set up: MessageList refused', $verdict($e, 'DoMessageList'), $REFUS);
+	foreach (array('DoPluginWebAuthnCreateOptions', 'DoPluginWebAuthnRegister') as $m) {
+		$check("required, not set up: $m is in the allow-list", $verdict($e, $m), 'passe');
+	}
+	foreach (array('DoPluginWebAuthnRename', 'DoPluginWebAuthnRemove', 'DoPluginWebAuthnAssertOptions') as $m) {
+		$check("required, not set up: $m is not (nothing to rename or remove yet)", $verdict($e, $m), $REFUS);
+	}
+	$kE = new SoftAuthenticator(-257);
+	$inscrire($e, $kE);
+	$e->request();
+	$check('enrolled with a key (RS256): MessageList passes', $verdict($e, 'DoMessageList'), 'passe');
+	$aData = array('Auth' => true);
+	$e->FilterAppData(false, $aData);
+	$check('… and the screen no longer forces (SetupTwoFactor false)', $aData['SetupTwoFactor'], false);
+	$aRaw = $e->raw(); $aRaw['PasskeysBox'] = \base64_encode(\random_bytes(64)); $e->setRaw($aRaw);
+	$e->request();
+	$check('a key box tampered with (cannot be opened): counted as not set up', $verdict($e, 'DoMessageList'), $REFUS);
+	$check('… and the login is not let through on the password alone (fail closed)', $connexion($e, array()), 'refused:TwoFactorCodeRequired');
+	$aRaw['PasskeysBox'] = TwoFactorRecord::seal('[{"Id":"' . SoftAuthenticator::b64u(\random_bytes(32)) . '","Alg":-7,"Key":"x","SignCount":0}]', TwoFactorRecord::key('another install'));
+	$e->setRaw($aRaw);
+	$check('a key sealed under another installation\'s salt is not accepted as one', $connexion($e, array()), 'refused:TwoFactorCodeRequired');
+
+	// App passwords (S-09): required with the first factor, released with the last.
+	\file_put_contents("$sRoot.conf", '<?php return ' . \var_export(array('racine' => $sRoot, 'domaines' => array('smail.tn')), true) . ';');
+	$ap = new P();
+	$ap->config = $WA + array('app_passwords_conf' => "$sRoot.conf");
+	$kA = new SoftAuthenticator(-7);
+	$inscrire($ap, $kA);
+	$check('a first key requires app passwords for IMAP', \Convergent\Appli\Appli::lire("$sRoot/smail.tn/rym.json")['exige'], true);
+	$ap->params = array('Ref' => $ap->DoGetTwoFactorInfo()['Result']['Passkeys'][0]['Ref']) + $preuve($ap, $kA);
+	$ap->DoWebAuthnRemove();
+	$check('removing the last one releases them', \Convergent\Appli\Appli::lire("$sRoot/smail.tn/rym.json")['exige'], false);
+	@\unlink("$sRoot/smail.tn/rym.json"); @\rmdir("$sRoot/smail.tn"); @\rmdir($sRoot); @\unlink("$sRoot.conf");
+	\file_put_contents("$sRoot-ro.conf", '<?php return ' . \var_export(array('racine' => '/proc/no-such-store', 'domaines' => array('smail.tn')), true) . ';');
+	$ar = new P();
+	$ar->config = $WA + array('app_passwords_conf' => "$sRoot-ro.conf");
+	$check('S-09: when app passwords cannot be required, the first key is refused', $inscrire($ar, new SoftAuthenticator(-7)), false);
+	$check('… and nothing is on', $ar->DoGetTwoFactorInfo()['Result']['On'], false);
+	@\unlink("$sRoot-ro.conf");
+
+	// S-21: a first key forgets the remembered devices, as the TOTP does.
+	$sm = new P();
+	$sm->config = $WA;
+	$sSignMe2 = $sm->oStore->GenerateFilePath('rym@smail.tn', 3);
+	\file_put_contents($sSignMe2 . 'remembered-before', 'token');
+	$inscrire($sm, new SoftAuthenticator(-7));
+	$check('S-21: a first key removes every remember-me token of the account', \glob($sSignMe2 . '*'), array());
+
+	// Keys switched off afterwards: the account is still protected, by its backup codes.
+	$off = new P();
+	$off->config = $WA;
+	$kO = new SoftAuthenticator(-7);
+	$aO = $inscrire($off, $kO);
+	$off->config = array();
+	$check('keys switched off by the administrator: the login still asks for a factor', $connexion($off, array()), 'refused:TwoFactorCodeRequired');
+	$check('… an assertion is refused ("unavailable")', $connexion($off, array('webauthn_assertion' => '{}')), 'refused:');
+	$check('… and a backup code still opens it', $connexion($off, array('totp_code' => \explode(' ', $aO['BackupCodes'])[0])), 'ok');
+
+	foreach (array($d, $w, $e, $ap, $ar, $sm, $off) as $x) { \is_dir($x->oStore->root) && \exec('rm -rf ' . \escapeshellarg($x->oStore->root)); }
 
 	// The temporary storage of every double.
 	foreach (array($p, $r, $t, $a, $n, $q, $o, $w, $f, $g, $h, $k) as $x) { \is_dir($x->oStore->root) && \exec('rm -rf ' . \escapeshellarg($x->oStore->root)); }

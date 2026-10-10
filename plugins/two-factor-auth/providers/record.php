@@ -31,6 +31,8 @@ final class TwoFactorRecord
 	public const LOCK_SECONDS = 900;
 	public const BACKUP_CODES = 8;
 	public const BACKUP_DIGITS = 9;
+	/** Pending WebAuthn challenges kept per account; the oldest goes first. */
+	public const MAX_CHALLENGES = 8;
 
 	/** A 32-byte key for this installation, derived from its salt. */
 	public static function key(string $sSalt) : string
@@ -103,7 +105,123 @@ final class TwoFactorRecord
 			unset($a['Secret'], $a['BackupCodes'], $a['QRCode']);
 		}
 		return $a + array('Enable' => false, 'Tested' => false, 'BackupHashes' => array(),
-			'LastSlice' => 0, 'Failures' => array(), 'LockedUntil' => 0);
+			'LastSlice' => 0, 'Failures' => array(), 'LockedUntil' => 0, 'Challenges' => array());
+	}
+
+	/** A record with no TOTP secret: the account registers a security key first (2.28.0). */
+	public static function blank(string $sUser) : array
+	{
+		return array(
+			'User' => $sUser,
+			'Enable' => false,
+			'Tested' => false,
+			'BackupHashes' => array(),
+			'LastSlice' => 0,
+			'Failures' => array(),
+			'LockedUntil' => 0,
+			'Challenges' => array()
+		);
+	}
+
+	/* ---- security keys (WebAuthn, 2.28.0) ---- */
+
+	/**
+	 * The registered security keys, or null when their box cannot be opened.
+	 *
+	 * Sealed like the TOTP secret, and for a reason of its own: a public key
+	 * is no secret, but whoever could WRITE the storage could otherwise add
+	 * a key of theirs to anyone's account. The box is authenticated: without
+	 * APP_SALT, nothing can be added that opens.
+	 */
+	public static function passkeys(array $a, string $sKey) : ?array
+	{
+		if (empty($a['PasskeysBox'])) {
+			return array();
+		}
+		$s = self::unseal((string) $a['PasskeysBox'], $sKey);
+		if (null === $s) {
+			return null;
+		}
+		try {
+			$l = \json_decode($s, true, 8, JSON_THROW_ON_ERROR);
+		} catch (\Throwable $e) {
+			return null;
+		}
+		return \is_array($l) ? \array_values($l) : null;
+	}
+
+	public static function withPasskeys(array $a, array $aKeys, string $sKey) : array
+	{
+		if (!$aKeys) {
+			unset($a['PasskeysBox']);
+			return $a;
+		}
+		$a['PasskeysBox'] = self::seal(\json_encode(\array_values($aKeys)), $sKey);
+		return $a;
+	}
+
+	/**
+	 * Whether a login must pass a second factor: TOTP on, or a key registered.
+	 * A key box that cannot be opened counts as ON — the login is refused
+	 * rather than let through on the password alone (fail closed).
+	 */
+	public static function isOn(array $a, string $sKey) : bool
+	{
+		if (!empty($a['Enable'])) {
+			return true;
+		}
+		$aKeys = self::passkeys($a, $sKey);
+		return null === $aKeys || \count($aKeys) > 0;
+	}
+
+	/**
+	 * Whether the account has a second factor it can actually use — what
+	 * "enrolled" means for enforcement. An unreadable key box is NOT one:
+	 * counted as not set up, as an unreadable record already is.
+	 */
+	public static function hasFactor(array $a, string $sKey) : bool
+	{
+		return !empty($a['Enable']) || (bool) self::passkeys($a, $sKey);
+	}
+
+	/**
+	 * A challenge, kept until it is used or expires. Bound to a purpose
+	 * (login, register, reauth) and to the browser that asked (a keyed hash
+	 * of its connection token): one issued at login cannot confirm a removal,
+	 * nor one issued to one browser serve in another.
+	 */
+	public static function addChallenge(array $a, string $sChallenge, string $sPurpose, string $sBinding, int $iNow, int $iTtl, string $sKey) : array
+	{
+		$aList = \array_values(\array_filter((array) ($a['Challenges'] ?? array()),
+			fn ($c) => \is_array($c) && (int) ($c['e'] ?? 0) > $iNow));
+		$aList[] = array('c' => $sChallenge, 'p' => $sPurpose, 'b' => self::hashCode($sBinding, $sKey), 'e' => $iNow + $iTtl);
+		$a['Challenges'] = \array_slice($aList, -self::MAX_CHALLENGES);
+		return $a;
+	}
+
+	/**
+	 * Spends a challenge: [usable, record without it]. Removed whatever the
+	 * outcome — a challenge is used once, even by a failed attempt — and
+	 * expired ones are dropped on the way. Usable only for the same purpose,
+	 * from the same browser, before it expires.
+	 */
+	public static function takeChallenge(array $a, ?string $sChallenge, string $sPurpose, string $sBinding, int $iNow, string $sKey) : array
+	{
+		$bUsable = false;
+		$aList = array();
+		foreach ((array) ($a['Challenges'] ?? array()) as $c) {
+			if (!\is_array($c) || (int) ($c['e'] ?? 0) <= $iNow) {
+				continue;
+			}
+			if (null !== $sChallenge && \is_string($c['c'] ?? null) && \hash_equals($c['c'], $sChallenge)) {
+				$bUsable = $sPurpose === ($c['p'] ?? '') && '' !== $sBinding
+					&& \hash_equals((string) ($c['b'] ?? ''), self::hashCode($sBinding, $sKey));
+				continue;
+			}
+			$aList[] = $c;
+		}
+		$a['Challenges'] = $aList;
+		return array($bUsable, $a);
 	}
 
 	public static function isLocked(array $a, int $iNow) : bool

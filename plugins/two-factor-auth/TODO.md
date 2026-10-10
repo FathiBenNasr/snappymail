@@ -1,5 +1,103 @@
 # two-factor-auth — TODO
 
+## 10 octobre 2026 — 2.28.0 : clés de sécurité et clés d'accès (WebAuthn) en second facteur (A10, §60) — **non déployé**
+
+- **Pourquoi un second facteur, et jamais une connexion sans mot de passe** : SnappyMail
+  ouvre la boîte en IMAP **avec le mot de passe de la personne**. Une clé d'accès prouve qui
+  est au clavier, elle ne donne pas ce mot de passe au serveur. Se connecter avec la clé
+  seule obligerait à **conserver les mots de passe côté serveur** (chiffrés, donc
+  déchiffrables par le serveur), ou à détenir un **compte maître capable d'ouvrir n'importe
+  quelle boîte** (`imapproxy`/SASL proxy-auth) — les deux sont exclus par les règles du
+  propriétaire (moindre privilège, aucun secret conservé). Donc : mot de passe d'abord, puis
+  le code **ou** la clé. Écrit aussi en tête de `DoLogin()` et dans le `README.md`.
+- **Fait** — vérification entièrement côté serveur, **sans dépendance tierce**
+  (`providers/webauthn.php`, ~500 lignes) :
+  - algorithmes **ES256** (P-256, openssl ; point vérifié sur la courbe), **RS256**
+    (2048 à 4096 bits, openssl), **EdDSA** (Ed25519, sodium) ;
+  - attestation **`none`** et **`packed`** (auto-attestation vérifiée avec la clé créée ;
+    `x5c` vérifiée avec la clé du certificat, **chaîne non approuvée** : l'attestation ne
+    sert jamais ici à faire confiance à un modèle, seulement à refuser une déclaration
+    fausse) ; tout autre format (`tpm`, `android-key`…) refusé ;
+  - **CBOR minimal et borné** : longueurs définies seulement, ni flottant ni étiquette,
+    profondeur 8, 64 éléments par conteneur, 512 nœuds, 16 Kio, clé dupliquée refusée,
+    clé texte que PHP changerait en entier (`"1"`) refusée ;
+  - contrôles : **défi** aléatoire (32 octets), **à usage unique** (dépensé même par un
+    échec), **lié au navigateur** (empreinte HMAC du jeton de connexion `smtoken`) **et à
+    l'usage** (`login`, `register`, `reauth`), **durée** réglable ; **origine** dans la
+    liste configurée (jamais l'en-tête `Host`), `crossOrigin` refusé ; **`rpIdHash`** ;
+    drapeaux **UP** (et **UV** si exigé) ; **compteur** de signature qui recule refusé
+    (ou journalisé, réglage `warn`) ; la clé doit être **dans la liste du compte** ;
+    `userHandle` comparé.
+  - **Stockage** : dans le même enregistrement que le TOTP, liste **scellée**
+    (`PasskeysBox`, secretbox, clé dérivée d'`APP_SALT`) — une clé publique n'est pas un
+    secret, mais qui pourrait **écrire** le stockage ajouterait sinon la sienne au compte
+    de n'importe qui. Boîte illisible : la connexion **exige** un second facteur (échec
+    fermé), et l'enrôlement imposé la compte comme « non enrôlé ».
+- **Connexion** : mot de passe juste et pas de facteur → refus `TwoFactorCodeRequired`
+  suivi de `:<options en base64url>` si le compte a une clé — le défi n'est donc émis
+  **qu'après un mot de passe juste**. L'écran affiche « Utiliser une clé de sécurité » ;
+  l'assertion part dans un champ caché, par le bouton de connexion du cœur. Le code reste
+  possible (TOTP s'il est actif, **codes de secours** toujours). Échecs comptés dans le
+  **même verrouillage** que les codes (5 en 15 min).
+- **Réglages** : liste (nom, ajout, dernière utilisation), ajout, renommage, retrait.
+  **Retirer**, ajouter une **deuxième** clé, ajouter un **TOTP** à côté d'une clé, couper le
+  TOTP, tout effacer : exigent un **second facteur courant** — code, ou la clé (bouton
+  « Utiliser une clé » dans la fenêtre du code). La **première** clé d'un compte donne
+  **huit codes de secours**, montrés une fois (sans eux, une clé perdue = une boîte
+  perdue). Un TOTP créé à côté d'une clé ne compte **qu'une fois testé**.
+  fr/en/ar, garde `Auth`, `unicode-bidi: plaintext` sur les noms et dates, aucune
+  expression calculée dans le gabarit, nom de clé nettoyé des caractères de contrôle et de
+  forçage bidi (`\p{C}`), 64 au plus.
+- **Imposer (2.27.0)** : une clé compte comme enrôlement ; **`DoPluginWebAuthnCreateOptions`
+  et `DoPluginWebAuthnRegister`** ajoutés à la liste blanche, **mesurés** sur banc-smail
+  (`cle.js`, journal par phase) : rien d'autre n'est appelé pour inscrire une clé.
+  S-21 (appareils mémorisés oubliés) et S-09 (mots de passe d'application exigés avant
+  activation, relâchés au retrait de la dernière) valent pour les clés.
+- **Réglages** (rien en dur) : `webauthn_enabled` (**éteint** par défaut),
+  `webauthn_origins` (vide = éteint), `webauthn_rp_id` (vide = hôte de la première
+  origine ; une IP est refusée, WebAuthn l'interdit), `webauthn_require_uv`,
+  `webauthn_max_passkeys` (10, borné 1–50), `webauthn_challenge_ttl` (300 s, borné
+  30–3600), `webauthn_counter_regression` (`refuse`/`warn`).
+- **Preuves** :
+  - `WebAuthnTest.php` **92** contrôles : clés **engendrées** (openssl, sodium) par un
+    authentificateur logiciel écrit d'après la spécification (`tests/authenticator.php`,
+    son propre encodeur CBOR), et **sorties d'authentificateurs réels** — vecteurs de
+    py_webauthn (Duo Security, BSD-3) : YubiKey `packed` avec certificat (ES256 et
+    Ed25519, identifiant de 128 octets), Chrome `none`, assertions ES256 et RS256 réelles.
+  - `ActionsTest.php` 194 (+83), `RecordTest.php` 54 (+15), JS **30** (+19, `node:vm`
+    sur les vrais fichiers).
+  - **Mutations** : 39 contrôles cassés un à un (origine, rpId, UP, UV, défi, type,
+    signature, compteur, clé d'un autre compte, userHandle, attestation x5c et auto,
+    rawId, point EC, CBOR, liaison/expiration/dépense du défi, verrouillage, preuve exigée
+    pour retirer/ajouter, liste blanche, JS) : **37 font tomber 1 à 11 contrôles**. Les 2
+    survivants sont **équivalents** (gardés deux fois) : taille RSA (openssl revérifie
+    `bits >= 2048`) et longueur d'une chaîne CBOR (la fin d'entrée est revérifiée).
+  - **Banc** `BANC=cle sh tests/browser/preparer.sh` sur banc-smail, authentificateur
+    virtuel CDP (`WebAuthn.addVirtualAuthenticator`, la pile WebAuthn de Chrome signe
+    elle-même) : **22 contrôles, 0 échec** — inscription sous enrôlement imposé, courrier
+    refusé avant et servi après, connexion mot de passe + clé, compteur avancé, renommage,
+    retrait confirmé par la clé, enrôlement de nouveau exigé. Compte éphémère créé puis
+    supprimé, greffon et configuration du banc remis. `forcer.js` (2.27.0) : **34, 0
+    échec**. Le banc est joint sous `http://banc-smail.test:8932` (règle de résolution vers
+    10.89.10.1, origine déclarée sûre) : WebAuthn refuse une IP comme partie de confiance.
+  - Captures : `docs/captures/` (README dedans).
+- **Reste / limites** :
+  - **Rien de déployé.** Avant la production : poser `webauthn_origins` =
+    `https://webmail.smail.tn` (resp. fastmail) et choisir `webauthn_rp_id` (le changer
+    plus tard rend toutes les clés inutilisables).
+  - Pas de connexion **sans mot de passe** (voir plus haut) ni de clé **découvrable**
+    (`residentKey: discouraged`) : voulu.
+  - Attestation : chaîne non vérifiée, pas de liste d'AAGUID autorisés ; formats `tpm`,
+    `android-key`, `apple`, `fido-u2f` refusés (les navigateurs envoient `none` quand on
+    demande `none`, ce qui est le cas).
+  - Le défi de connexion voyage dans `messageAdditional` du refus : le cœur l'affiche un
+    instant sous l'erreur avant que le greffon ne l'efface (même mécanisme qu'en 2.24.0).
+  - La fenêtre de preuve garde le titre « 2-Step verification test » (déjà le cas pour
+    « effacer » depuis 2.21.0).
+  - Écran arabe non capturé au banc (catalogue complet pour les clés, contrôlé en JS).
+  - Pas encore éprouvé avec une **vraie** clé matérielle sur le webmail : vecteurs réels
+    au niveau du vérificateur seulement, authentificateur virtuel au banc.
+
 ## 10 octobre 2026 — 2.27.0 : « imposer la 2FA » tenu par le serveur (CDU-10 / S-76) — **non déployé**
 
 - **Constat** : jusqu'à 2.26.0, un compte tenu de s'enrôler (interrupteur global ou domaine

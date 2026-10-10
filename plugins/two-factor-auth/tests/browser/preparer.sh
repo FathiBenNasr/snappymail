@@ -5,6 +5,11 @@
 #     sh plugins/two-factor-auth/tests/browser/preparer.sh          # verdict
 #     MESURE=1 sh plugins/two-factor-auth/tests/browser/preparer.sh # only log the actions called
 #     CAPTURES=/dir sh ...                                          # screenshots of the three screens
+#     BANC=cle sh plugins/two-factor-auth/tests/browser/preparer.sh # 2.28.0: a security key (cle.js)
+#
+# BANC=cle also switches security keys on in the bench configuration, for
+# the origin http://banc-smail.test:8932 (WebAuthn refuses an IP address as
+# relying party; cle.js maps that name to the bench).
 #
 # 1. puts THIS plugin in the bench (the bench's own copy is saved and put back),
 # 2. sets force_two_factor_domains = smail.tn in the BENCH's plugin config only,
@@ -15,6 +20,8 @@
 # Prerequisites: the banc-smail and puppeteer-test containers are up
 # (tools/banc-conteneurs/README.md). Runs as root on the host.
 set -eu
+BANC=${BANC:-forcer}
+case "$BANC" in forcer|cle) ;; *) echo "BANC=forcer ou cle" >&2; exit 2 ;; esac
 ICI=$(cd "$(dirname "$0")" && pwd)
 GREFFON=$(cd "$ICI/../.." && pwd)
 COMPTES=${COMPTES:-/root/Development/SnappyMail/business/smail-tn/tests/browser/comptes_essai.php}
@@ -48,12 +55,14 @@ trap menage EXIT
 
 rm -rf "$D/plugins/two-factor-auth"
 cp -r "$GREFFON" "$D/plugins/two-factor-auth"
-rm -rf "$D/plugins/two-factor-auth/tests"
-python3 - "$CONF" <<'PY'
+rm -rf "$D/plugins/two-factor-auth/tests" "$D/plugins/two-factor-auth/docs"
+python3 - "$CONF" "$BANC" <<'PY'
 import json, os, sys
 f = sys.argv[1]
 c = json.load(open(f)) if os.path.exists(f) else {}
 c.setdefault('plugin', {})['force_two_factor_domains'] = 'smail.tn'
+if sys.argv[2] == 'cle':
+    c['plugin'].update(webauthn_enabled=True, webauthn_origins='http://banc-smail.test:8932', webauthn_rp_id='banc-smail.test')
 json.dump(c, open(f, 'w'), indent=4)
 PY
 chown -R 33:33 "$D/plugins/two-factor-auth" "$CONF"
@@ -63,11 +72,11 @@ echo "greffon two-factor-auth <- $GREFFON ($(sed -n "s/.*VERSION *= *'\([^']*\)'
 
 sudo -E -u apache php -- creer "$A" < "$COMPTES" | head -1
 podman exec puppeteer-test mkdir -p /essai/two-factor-auth
-podman cp "$ICI/forcer.js" puppeteer-test:/essai/two-factor-auth/forcer.js
+podman cp "$ICI/$BANC.js" puppeteer-test:/essai/two-factor-auth/$BANC.js
 [ -n "${CAPTURES:-}" ] && podman exec puppeteer-test mkdir -p /essai/two-factor-auth/captures
 A="$A@smail.tn" MESURE=${MESURE:-} podman exec -e MDP -e A -e MESURE \
 	${CAPTURES:+-e CAPTURES=/essai/two-factor-auth/captures} \
-	puppeteer-test node /essai/two-factor-auth/forcer.js || STATUT=$?
+	puppeteer-test node /essai/two-factor-auth/$BANC.js || STATUT=$?
 if [ -n "${CAPTURES:-}" ]; then
 	mkdir -p "$CAPTURES"
 	podman cp puppeteer-test:/essai/two-factor-auth/captures/. "$CAPTURES/"
