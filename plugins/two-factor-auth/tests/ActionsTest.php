@@ -15,7 +15,7 @@ namespace RainLoop { class Notifications { const AuthError = 102; }
 namespace RainLoop\Model { abstract class Account { public function __construct(private string $e) {} public function Email() : string { return $this->e; } }
 	class MainAccount extends Account {} class AdditionalAccount extends Account {} }
 namespace RainLoop\Providers\Storage\Enumerations { class StorageType { const CONFIG = 1; const SIGN_ME = 3; } }
-namespace RainLoop\Enumerations { class PluginPropertyType { const BOOL = 1; const STRING = 2; } }
+namespace RainLoop\Enumerations { class PluginPropertyType { const BOOL = 1; const STRING = 2; const STRING_TEXT = 3; } }
 namespace RainLoop\Plugins {
 	class Property { public static function NewInstance($n) { return new self; } public function __call($m, $a) { return $this; } }
 	abstract class AbstractPlugin
@@ -195,6 +195,26 @@ namespace {
 	$check('S-09: the note is bound to that flag, not shown unconditionally',
 		(bool) \preg_match('/<p[^>]*data-bind="visible: appPasswordsNote"[^>]*data-i18n="PLUGIN_2FA\/APP_PASSWORDS_NOTE"/', $sTpl), true);
 
+	/* ---- 2.26.0: enforced per tenant (domain list), never by default ---- */
+	$check('the list is read as domains, the rest dropped',
+		TwoFactorAuthPlugin::parseDomains("Smail.tn, @convergent.tn\nnot a domain;x..tn  societe.com.tn"), array('smail.tn', 'convergent.tn', 'societe.com.tn'));
+	$f = new P();
+	$aData = array('Auth' => true);
+	$f->FilterAppData(false, $aData);
+	$check('by default nobody is required to set it up', array($aData['RequireTwoFactor'], $aData['SetupTwoFactor']), array(false, false));
+	$f->config = array('force_two_factor_domains' => "convergent.tn\nsmail.tn");
+	$aData = array('Auth' => true);
+	$f->FilterAppData(false, $aData);
+	$check('an account of a listed domain must set it up', array($aData['RequireTwoFactor'], $aData['SetupTwoFactor']), array(true, true));
+	$f->oAccount = new \RainLoop\Model\MainAccount('rym@smail.tn.ailleurs.com');
+	$aData = array('Auth' => true);
+	$f->FilterAppData(false, $aData);
+	$check('a look-alike domain is not listed', $aData['RequireTwoFactor'], false);
+	$aData = array('Auth' => false);
+	$f->oAccount = new \RainLoop\Model\MainAccount('rym@smail.tn');
+	$f->FilterAppData(false, $aData);
+	$check('before login nothing is said about any domain', $aData['RequireTwoFactor'], false);
+
 	/* ---- app passwords: required while the second factor is on ---- */
 	require_once '/root/Development/SnappyMail/SnappyMail-mots-de-passe-appli/auth/Appli.php';
 	$sRoot = \sys_get_temp_dir() . '/appli-2fa-' . \getmypid();
@@ -233,7 +253,7 @@ namespace {
 	@\unlink("$sRoot/smail.tn/rym.json"); @\rmdir("$sRoot/smail.tn"); @\rmdir($sRoot); @\unlink("$sRoot.conf");
 
 	// The temporary storage of every double.
-	foreach (array($p, $r, $t, $a, $n, $q, $o, $w) as $x) { \is_dir($x->oStore->root) && \exec('rm -rf ' . \escapeshellarg($x->oStore->root)); }
+	foreach (array($p, $r, $t, $a, $n, $q, $o, $w, $f) as $x) { \is_dir($x->oStore->root) && \exec('rm -rf ' . \escapeshellarg($x->oStore->root)); }
 
 	echo "\n", $iFail ? "$iFail failed\n" : "0 failed\n";
 	exit($iFail ? 1 : 0);

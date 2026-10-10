@@ -10,8 +10,8 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 {
 	const
 		NAME     = 'Two Factor Authentication',
-		VERSION  = '2.25.0',
-		RELEASE  = '2026-10-09',
+		VERSION  = '2.26.0',
+		RELEASE  = '2026-10-10',
 		REQUIRED = '2.36.0',
 		CATEGORY = 'Login',
 		DESCRIPTION = 'Provides support for TOTP 2FA',
@@ -51,6 +51,11 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 //				->SetLabel('PLUGIN_TWO_FACTOR/LABEL_FORCE')
 				->SetLabel('Enforce 2-Step Verification')
 				->SetType(\RainLoop\Enumerations\PluginPropertyType::BOOL),
+			\RainLoop\Plugins\Property::NewInstance("force_two_factor_domains")
+				->SetLabel('Enforce 2-Step Verification for these domains')
+				->SetType(\RainLoop\Enumerations\PluginPropertyType::STRING_TEXT)
+				->SetDescription('One domain per line (or separated by commas or spaces). Accounts of these domains must set up 2-Step Verification, as with the switch above, which applies to everyone. Empty: nobody but what the switch above says.')
+				->SetDefaultValue(''),
 			\RainLoop\Plugins\Property::NewInstance("otp_issuer")
 				->SetLabel('Service name shown in the authenticator')
 				->SetType(\RainLoop\Enumerations\PluginPropertyType::STRING)
@@ -70,9 +75,15 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 			$aResult['RequireTwoFactor'] = (bool) $this->Config()->Get('plugin', 'force_two_factor_auth', false);
 
 			$aResult['SetupTwoFactor'] = false;
-			if ($aResult['RequireTwoFactor'] && !empty($aResult['Auth'])) {
-				$aData = $this->getTwoFactorInfo($this->getMainAccountFromToken());
-				$aResult['SetupTwoFactor'] = empty($aData['IsSet']) || empty($aData['Enable']);
+			if (!empty($aResult['Auth'])) {
+				$oAccount = $this->getMainAccountFromToken();
+				// Per tenant (2.26.0): a domain in the list is held to the
+				// same rule as the global switch, and only its accounts.
+				$aResult['RequireTwoFactor'] = $aResult['RequireTwoFactor'] || $this->forcedFor($oAccount->Email());
+				if ($aResult['RequireTwoFactor']) {
+					$aData = $this->getTwoFactorInfo($oAccount);
+					$aResult['SetupTwoFactor'] = empty($aData['IsSet']) || empty($aData['Enable']);
+				}
 			}
 
 			// The settings screen states that mail apps need app passwords only
@@ -87,6 +98,35 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 				}
 			}
 		}
+	}
+
+	/**
+	 * The domains whose accounts must set up the second factor.
+	 *
+	 * @return string[] lower-case domain names; anything that is not one is dropped
+	 */
+	public static function parseDomains(string $sList) : array
+	{
+		$aResult = array();
+		foreach (\preg_split('/[\s,;]+/', \strtolower($sList), -1, PREG_SPLIT_NO_EMPTY) as $sDomain) {
+			$sDomain = \ltrim($sDomain, '@');
+			if (\preg_match('/^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9-]{2,63}$/', $sDomain)) {
+				$aResult[$sDomain] = $sDomain;
+			}
+		}
+		return \array_values($aResult);
+	}
+
+	/** Whether the account's domain is one the administrator listed. */
+	protected function forcedFor(string $sEmail) : bool
+	{
+		$iAt = \strrpos($sEmail, '@');
+		if (false === $iAt) {
+			return false;
+		}
+		$sDomain = \strtolower(\substr($sEmail, $iAt + 1));
+		return \in_array($sDomain,
+			static::parseDomains((string) $this->Config()->Get('plugin', 'force_two_factor_domains', '')), true);
 	}
 
 	/**
