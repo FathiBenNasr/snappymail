@@ -785,7 +785,7 @@ class Actions
 		// 20261009 : S-19 de l'audit (plainToHtml) corrige a son tour dans
 		// app.js / app.min.js ; une valeur neuve a chaque correction, jamais reprise.
 		$aResult['StaticLibsJs'] = Utils::WebStaticPath('js/' . ($bAppJsDebug ? '' : 'min/') .
-			'libs' . ($bAppJsDebug ? '' : '.min') . '.js') . '?r=securite-20261009';
+			'libs' . ($bAppJsDebug ? '' : '.min') . '.js') . '?r=securite-20261010';
 
 		$this->oPlugins->InitAppData($bAdmin, $aResult, $oAccount);
 
