@@ -63,6 +63,11 @@ const REFUS = 'TwoFactorSetupRequired';
 	const capture = async (nom, sel) => {
 		if (!CAPTURES) return;
 		const el = sel ? await p.$(sel) : null;
+		// Captures are published (the repository is mirrored to GitHub): backup
+		// codes are masked in the page before the shot, even for a throw-away account.
+		await p.evaluate(() => document.querySelectorAll('pre').forEach(e => {
+			if (/\d{8}/.test(e.textContent)) e.textContent = '•••••••• ••••••••';
+		}));
 		await (el || p).screenshot({ path: CAPTURES + '/' + nom + '.png' });
 	};
 	const connecter = async () => {
