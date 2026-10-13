@@ -1,5 +1,37 @@
 # two-factor-auth — TODO
 
+## 13 octobre 2026 — 2.29.0 : les deux restes de la 2.28.0 (A10)
+
+* **Le défi ne s'affiche plus, pas même une image.** Le refus `TwoFactorCodeRequired:`
+  porte les options de la clé en base64url ; `Login.js` du cœur l'écrit sous l'erreur
+  **dans la même tâche** que l'événement (`fireEvent`, puis `submitError` et
+  `submitErrorAdditional`). Le greffon l'effaçait par `setTimeout(…, 0)`, c'est-à-dire
+  **après** une occasion de peindre. Désormais `queueMicrotask` : après le code du cœur,
+  avant toute peinture. Prouvé dans les deux sens :
+  - JS : le contrôle lit le texte à la fin de la file des microtâches — rouge avec
+    `setTimeout`, vert avec le correctif. ⚠️ Une première écriture lisait le texte dans un
+    `setTimeout` mis en file **après** celui du greffon : elle passait **aussi** avec le
+    défaut. *Un contrôle d'ordre se juge contre la règle du navigateur, pas contre une
+    autre minuterie* ;
+  - banc : un `requestAnimationFrame` compte chaque image peinte où le défi figure —
+    avec l'ancien code, **2 échecs sur 3 passages** (en, ar ; le passage fr ne l'a pas
+    attrapé : une image se peint ou non selon la charge), 0 avec le correctif.
+* **L'écran arabe** : le catalogue `ar` ne portait que 19 clés sur 38 (tout le TOTP venu de
+  l'amont tombait en anglais) — complété, et un contrôle exige désormais **les mêmes clés**
+  dans `en`, `fr` et `ar`. Les captures arabes ont montré un défaut que rien d'autre ne
+  voyait : le champ du nom, **vide**, portait `dir="auto"`, donc `ltr`, et son exemple
+  « اسم المفتاح، مثلًا YubiKey أو الهاتف » sortait mots retournés. Le sens n'est plus
+  posé que quand le champ a du texte ; vide, il suit la page — contrôlé au banc.
+* Banc (`BANC=cle`, banc-smail, authentificateur virtuel) : **37 contrôles, 0 échec**,
+  avec deux passages de connexion par clé de plus (anglais, arabe) et leurs réglages.
+  JS 31, PHP 92 + Actions + Record, 0 échec. Captures `docs/captures/` (fr, en, ar).
+* Déployée sur les deux webmails **sans toucher aux réglages `webauthn_*`** : allumée
+  sur webmail.smail.tn (décision du 10 octobre), **éteinte sur fastmail** — l'allumer
+  demande au propriétaire de choisir `webauthn_rp_id` (`convergent.tn` ou
+  `fastmail.convergent.tn` ; le changer ensuite rend les clés inscrites inutilisables).
+* Reste : aucun essai avec une **vraie** clé sur le vrai webmail (seulement
+  l'authentificateur virtuel de Chrome et les vecteurs réels du vérificateur).
+
 ## 10 octobre 2026 — 2.28.0 : clés de sécurité et clés d'accès (WebAuthn) en second facteur (A10, §60) — **non déployé**
 
 - **Pourquoi un second facteur, et jamais une connexion sans mot de passe** : SnappyMail

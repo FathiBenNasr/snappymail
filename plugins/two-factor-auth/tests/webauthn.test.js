@@ -114,6 +114,7 @@ function ecranConnexion(extra = {}) {
 	Object.assign(w, {
 		addEventListener: (n, f) => { ecoute[n] = f; },
 		setTimeout: f => minuteries.push(f),
+		queueMicrotask: f => minuteries.push(f),
 		Element: { fromHTML: h => (h.includes('twofactor-key') ? champs.bouton : {}) },
 		Event: function () {},
 		document: { location: {} }
@@ -293,7 +294,7 @@ test('settings: before login (Auth not true), nothing is asked of the server', (
 
 /* ---- the three catalogues ---- */
 
-test('every PLUGIN_2FA key the screens use is in en and fr; every 2.28.0 key in ar too', () => {
+test('every PLUGIN_2FA key the screens use is in en, fr and ar (2.29.0: ar complete)', () => {
 	const ini = l => Object.fromEntries(lire('langs/' + l + '.ini').split('\n').map(x => /^(\w+)\s*=/.exec(x)).filter(Boolean).map(m => [m[1], 1]));
 	const utilisees = new Set();
 	for (const f of ['js/TwoFactorAuthLogin.js', 'js/TwoFactorAuthSettings.js', 'templates/TwoFactorAuthSettings.html', 'templates/PopupsTwoFactorAuthTest.html']) {
@@ -305,5 +306,9 @@ test('every PLUGIN_2FA key the screens use is in en and fr; every 2.28.0 key in 
 		assert.ok(en[k], 'en: ' + k);
 		assert.ok(fr[k], 'fr: ' + k);
 	}
-	for (const k of Object.keys(en).filter(k => /PASSKEY|KEY_REQUIRED/.test(k))) assert.ok(ar[k], 'ar: ' + k);
+	for (const k of utilisees) assert.ok(ar[k], 'ar: ' + k);
+	// The three catalogues carry exactly the same keys: an Arabic screen that
+	// falls back to English for half its labels reads as a broken one.
+	assert.deepStrictEqual(Object.keys(ar).sort(), Object.keys(en).sort());
+	assert.deepStrictEqual(Object.keys(fr).sort(), Object.keys(en).sort());
 });

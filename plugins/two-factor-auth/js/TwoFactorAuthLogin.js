@@ -72,7 +72,11 @@
 
 	// The password was right and the code is missing: say so, instead of the
 	// "authentication failed" that sends people to reset a good password.
-	// The core sets its own message right after this event, hence the timeout.
+	// The core sets its own message right after this event, in the same task
+	// (Login.js: fireEvent, then submitError and submitErrorAdditional). A
+	// microtask runs after that code and BEFORE the browser paints; the
+	// setTimeout of 2.28.0 ran after a paint, and the refusal — the key's
+	// request options in base64url — showed for a frame under the error.
 	addEventListener('sm-user-login-response', e => {
 		// An assertion is used once, whatever the answer.
 		const field = dom('input[name=webauthn_assertion]');
@@ -81,7 +85,7 @@
 		if (e.detail?.error && loginView && /^TwoFactorCodeRequired(:|$)/.test(additional)) {
 			keyOptions = webauthn()?.supported() ? webauthn().fromRefusal(additional) : null;
 			showKey(!!keyOptions);
-			setTimeout(() => {
+			queueMicrotask(() => {
 				loginView.submitError(rl.i18n(keyOptions ? 'PLUGIN_2FA/ERROR_CODE_OR_KEY_REQUIRED' : 'PLUGIN_2FA/ERROR_CODE_REQUIRED'));
 				loginView.submitErrorAdditional('');
 				if (keyOptions && wantKey) {
@@ -90,7 +94,7 @@
 				} else {
 					dom('input[name=totp_code]')?.focus();
 				}
-			}, 0);
+			});
 		} else {
 			wantKey = false;
 			e.detail?.error || (keyOptions = null, showKey(false));

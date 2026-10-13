@@ -20,6 +20,7 @@ function charger() {
 	const bac = {
 		addEventListener: (n, f) => { ecoute[n] = f; },
 		setTimeout: f => minuteries.push(f),
+		queueMicrotask: f => minuteries.push(f),
 		Element: { fromHTML: () => ({}) },
 		document: { location: {} },
 		window: {}
@@ -94,4 +95,43 @@ test('2.27.0: never forced in this page, nothing is reloaded nor refused', () =>
 	assert.strictEqual(e.aller('mailbox/INBOX'), false);
 	assert.strictEqual(e.aller('settings/general'), false);
 	assert.strictEqual(e.recharge(), 0);
+});
+
+
+// 2.29.0: the refusal carries the key's request options. The core writes it
+// under the error in the same task as the event; it must be gone before the
+// browser paints — that is, before the end of the microtask checkpoint.
+test('le défi n\'est jamais peint : effacé avant la fin de la tâche', async () => {
+	const ecoute = {};
+	const vue = {
+		viewModelTemplateID: 'Login',
+		viewModelDom: { querySelector: () => null },
+		erreur: '', complement: '',
+		submitError(v) { this.erreur = v; }, submitErrorAdditional(v) { this.complement = v; }
+	};
+	let peint = null;
+	const bac = {
+		addEventListener: (n, f) => { ecoute[n] = f; },
+		setTimeout,
+		queueMicrotask,
+		Element: { fromHTML: () => ({}) },
+		document: { location: {} },
+		window: {}
+	};
+	bac.window.rl = { settings: { get: () => false }, i18n: k => k };
+	vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../js/TwoFactorAuthLogin.js'), 'utf8'), bac);
+	ecoute['rl-view-model']({ detail: vue });
+	const refus = 'TwoFactorCodeRequired:eyJjaGFsbGVuZ2UiOiJhYmMifQ';
+	// What Login.js does, in one task: the event, then its own two setters.
+	ecoute['sm-user-login-response']({ detail: { error: 102, data: { messageAdditional: refus } } });
+	vue.submitError('Authentication failed');
+	vue.submitErrorAdditional(refus);
+	// A browser may paint once the task and its microtasks are done, before
+	// the next task. So the text must be gone at the end of this task's
+	// microtask checkpoint — read here, with a microtask queued after the
+	// plugin's; a setTimeout would come too late, whatever its delay.
+	await Promise.resolve();
+	peint = vue.complement;
+	assert.strictEqual(peint, '', 'le défi aurait été peint');
+	assert.strictEqual(vue.erreur, 'PLUGIN_2FA/ERROR_CODE_REQUIRED');
 });

@@ -93,8 +93,8 @@
 				<tr class="twofactor-passkey">
 					<td>
 						<span dir="auto" style="unicode-bidi: plaintext" data-bind="text: name, visible: !editing()"></span>
-						<input type="text" class="uiInput" maxlength="64" dir="auto" style="unicode-bidi: plaintext"
-							data-bind="textInput: draft, visible: editing, onEnter: $parent.savePasskey">
+						<input type="text" class="uiInput" maxlength="64" style="unicode-bidi: plaintext"
+							data-bind="textInput: draft, attr: {dir: draft() ? 'auto' : null}, visible: editing, onEnter: $parent.savePasskey">
 					</td>
 					<td style="unicode-bidi: plaintext" data-bind="text: created"></td>
 					<td style="unicode-bidi: plaintext" data-bind="text: lastUsed"></td>
@@ -108,8 +108,11 @@
 			</tbody>
 		</table>
 		<div class="control-group" data-bind="visible: canAddPasskey">
-			<input type="text" class="uiInput" maxlength="64" dir="auto" style="unicode-bidi: plaintext"
-				data-bind="textInput: newPasskeyName, disable: passkeyBusy" data-i18n="[placeholder]PLUGIN_2FA/PLACEHOLDER_PASSKEY_NAME">
+			<!-- dir="auto" on an EMPTY field is ltr: the Arabic placeholder came out
+			     word-reversed around « YubiKey ». Empty, the field takes the page's
+			     direction; filled, the direction of what was typed. -->
+			<input type="text" class="uiInput" maxlength="64" style="unicode-bidi: plaintext"
+				data-bind="textInput: newPasskeyName, attr: {dir: newPasskeyName() ? 'auto' : null}, disable: passkeyBusy" data-i18n="[placeholder]PLUGIN_2FA/PLACEHOLDER_PASSKEY_NAME">
 			<a class="btn twofactor-add-passkey" data-bind="click: addPasskey, css: {disabled: passkeyBusy}">
 				<i class="fontastic" data-bind="css: {'icon-spinner': passkeyBusy()}">🔑</i>
 				<span data-i18n="PLUGIN_2FA/BUTTON_ADD_PASSKEY"></span>

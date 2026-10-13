@@ -73,6 +73,14 @@ const REFUS = 'TwoFactorSetupRequired';
 	const connecter = async () => {
 		await p.goto(BASE + '/', { waitUntil: 'domcontentloaded', timeout: 90000 });
 		await p.waitForSelector('input[type=password]', { visible: true, timeout: 90000 });
+		// 2.29.0: the refusal carries the key's request options; count every
+		// painted frame where it shows. requestAnimationFrame runs just before
+		// a paint, so a frame that would show it is a frame counted here.
+		await p.evaluate(() => {
+			window.__defiPeint = 0;
+			const f = () => { (document.body.innerText || '').includes('TwoFactorCodeRequired') && window.__defiPeint++; requestAnimationFrame(f); };
+			requestAnimationFrame(f);
+		});
 		const champ = await p.$('input[name=Email], input[type=email]');
 		await champ.click({ clickCount: 3 }); await champ.type(A);
 		await p.type('input[type=password]', MDP);
@@ -124,6 +132,8 @@ const REFUS = 'TwoFactorSetupRequired';
 		await connecter();
 		await p.waitForSelector('.twofactor-key:not([hidden])', { visible: true, timeout: 30000 }).catch(() => {});
 		verifier(!!(await p.$('.twofactor-key:not([hidden])')), 'le mot de passe juste, le bouton « clé de sécurité » apparaît');
+		await pause(500);
+		verifier(0 === await p.evaluate(() => window.__defiPeint), 'le défi de la clé n\'est peint à aucune image (' + await p.evaluate(() => window.__defiPeint) + ')');
 		const message = await p.evaluate(() => (document.querySelector('.alert:not([hidden]) span') || {}).textContent || '');
 		verifier(/clé|key/i.test(message), 'le message nomme le code et la clé (« ' + message.trim() + ' »)');
 		// The form and the message above it: their common parent.
@@ -134,6 +144,44 @@ const REFUS = 'TwoFactorSetupRequired';
 		await authentifie().catch(() => {});
 		verifier(true === await p.evaluate(() => rl.settings.get('Auth')), 'connecté avec la clé, sans code');
 		verifier((await cles())[0].signCount > avant, 'le compteur de la clé a avancé (' + avant + ' → ' + (await cles())[0].signCount + ')');
+
+		// 2.29.0: the same login, and the settings, in English and in Arabic —
+		// the language comes from Accept-Language (determine_user_language).
+		for (const [langue, motif] of [['en', /key/i], ['ar', /مفتاح/]]) {
+			phase = 'connexion-cle-' + langue;
+			await p.evaluate(() => rl.app.logout());
+			await p.waitForSelector('input[type=password]', { visible: true, timeout: 30000 });
+			await p.setExtraHTTPHeaders({ 'Accept-Language': langue });
+			await connecter();
+			await p.waitForSelector('.twofactor-key:not([hidden])', { visible: true, timeout: 30000 }).catch(() => {});
+			const bouton = await p.$eval('.twofactor-key button', b => b.textContent.trim()).catch(() => '');
+			verifier(motif.test(bouton), langue + ' : le bouton parle la langue (« ' + bouton + ' »)');
+			const sens = await p.evaluate(() => getComputedStyle(document.querySelector('.twofactor-key')).direction);
+			verifier(('ar' === langue ? 'rtl' : 'ltr') === sens, langue + ' : sens de l\'écran ' + sens);
+			await pause(500);
+			verifier(0 === await p.evaluate(() => window.__defiPeint), langue + ' : le défi n\'est peint à aucune image');
+			await p.evaluate(() => { const f = document.querySelector('.twofactor-key').closest('form'); f && f.parentElement.setAttribute('data-capture', 'connexion'); });
+			await capture('cle-2-connexion-' + langue, '[data-capture=connexion]');
+			await p.click('.twofactor-key button');
+			await authentifie().catch(() => {});
+			verifier(true === await p.evaluate(() => rl.settings.get('Auth')), langue + ' : connecté avec la clé');
+			await pause(4000);
+			await fermerIdentite();
+			await p.evaluate(() => { location.hash = '#/settings/two-factor-auth'; });
+			await p.waitForSelector('.twofactor-passkey', { visible: true, timeout: 30000 }).catch(() => {});
+			await pause(1000);
+			const sensReglages = await p.evaluate(() => getComputedStyle(document.querySelector('.b-settings-two-factor') || document.body).direction);
+			verifier(('ar' === langue ? 'rtl' : 'ltr') === sensReglages, langue + ' : réglages en ' + sensReglages);
+			// An empty field with dir="auto" is ltr whatever the page: its Arabic
+			// placeholder came out word-reversed around « YubiKey » (2.29.0).
+			const sensChamp = await p.evaluate(() => { const i = document.querySelector('.twofactor-add-passkey').parentElement.querySelector('input.uiInput'); return i ? getComputedStyle(i).direction : '?'; });
+			verifier(('ar' === langue ? 'rtl' : 'ltr') === sensChamp, langue + ' : champ du nom, vide, en ' + sensChamp);
+			// The key's name is Latin inside an Arabic line: it must stay whole and in order.
+			const nomCle = await p.$eval('.twofactor-passkey', e => e.textContent).catch(() => '');
+			verifier(/YubiKey du banc/.test(nomCle), langue + ' : le nom de la clé reste lisible');
+			await capture('cle-1-reglages-' + langue, '.b-settings-two-factor');
+		}
+		await p.setExtraHTTPHeaders({ 'Accept-Language': 'fr' });
 
 		phase = 'reglages';
 		await pause(4000);
