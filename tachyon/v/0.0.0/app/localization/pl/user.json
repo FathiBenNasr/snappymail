@@ -45,7 +45,8 @@
 		"ATTACHMENTS": "Załączniki",
 		"REMEMBER_FOR_SESSION": "Zapamiętaj na tę sesję",
 		"REMEMBER_PERMANENT": "Zapamiętaj na stałe",
-		"CALENDAR": "Kalendarz"
+		"CALENDAR": "Kalendarz",
+		"SHOW_PASSWORD": "Pokaż hasło"
 	},
 	"LOGIN": {
 		"LABEL_LOGIN": "Login",
@@ -572,7 +573,12 @@
 		"MAILTO": "Zarejestruj obsługę linków 'mailto:' jako domyślnego klienta poczty",
 		"HTML_TO_MD": "Konwertuj HTML na Markdown zamiast zwykłego tekstu",
 		"DATE_FORMAT": "Format daty",
-		"DATE_FORMAT_HINT": "Pierwszy wpis jest zgodny z językiem interfejsu."
+		"DATE_FORMAT_HINT": "Pierwszy wpis jest zgodny z językiem interfejsu.",
+		"PREVIEW_LINES": "Podgląd wiadomości",
+		"PREVIEW_LINES_NONE": "Brak podglądu",
+		"PREVIEW_LINES_ONE": "Jedna linia",
+		"PREVIEW_LINES_TWO": "Dwie linie",
+		"PREVIEW_LINES_UNSUPPORTED": "Twój serwer poczty nie może generować podglądów, więc opcja ta nie da żadnego efektu."
 	},
 	"SETTINGS_CONTACTS": {
 		"LABEL_CONTACTS_AUTOSAVE": "Automatycznie dodawaj odbiorców do książki adresowej",

@@ -10,7 +10,8 @@
 		"CANCEL": "Anuluj",
 		"SEARCH": "Szukaj",
 		"YES": "Tak",
-		"NO": "Nie"
+		"NO": "Nie",
+		"SHOW_PASSWORD": "Pokaż hasło"
 	},
 	"LOGIN": {
 		"LABEL_LOGIN": "Login",
@@ -106,7 +107,8 @@
 		"HTML_ALERT_DO_NOT_USE_THIS_DATABASE": "Nie używaj tej bazy danych z dużą ilością aktywnych użytkowników.",
 		"HTML_ALERT_DOES_NOT_SUPPORTED": "Twój system nie zawiera wsparcia dla obsługi kontaktów.\n<br>\nMusisz zainstalować lub uruchomić na serwerze jedno z rozszerzeń <strong>PDO (SQLite / MySQL / PostgreSQL)</strong>.\n",
 		"COMPOSE_LIMIT": "Maksymalna liczba odbiorców z opcji wyboru",
-		"BCC_LIMIT": "Zalecaj użycie pola UDW przy przekroczeniu tej liczby odbiorców"
+		"BCC_LIMIT": "Zalecaj użycie pola UDW przy przekroczeniu tej liczby odbiorców",
+		"TEST_OK_BUT_DISABLED": "Baza danych odpowiada, ale obsługa kontaktów jest wyłączona, dane są niewidoczne dla użytkowników. Włącz opcję \"Włącz kontakty\" powyżej."
 	},
 	"TAB_DOMAINS": {
 		"LEGEND_DOMAINS": "Domeny",
