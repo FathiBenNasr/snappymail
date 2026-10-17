@@ -74,7 +74,7 @@ abstract class Driver
 		return $this;
 	}
 
-	abstract protected function writeImplementation($mDesc) : bool;
+	abstract protected function writeImplementation($mDesc, int $iType = \LOG_INFO) : bool;
 
 	protected function clearImplementation() : bool
 	{
@@ -102,7 +102,7 @@ abstract class Driver
 		if ($bDiplayCrLf) {
 			$sDesc = \rtrim(\strtr($sDesc, array("\r" => '\r', "\n" => '\n'."\n")));
 		}
-		return $this->writeImplementation($sDesc);
+		return $this->writeImplementation($sDesc, $iType);
 	}
 
 	final public function Clear() : bool

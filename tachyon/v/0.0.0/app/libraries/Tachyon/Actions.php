@@ -546,6 +546,18 @@ class Actions
 			}
 			$this->oLoggerAuth->Write($this->compileLogParams($sLine, $oAccount, $aAdditionalParams), \LOG_WARNING);
 		}
+		/**
+		 * Also in the main log, which until now saw nothing of either outcome: a
+		 * failure went only to the fail2ban file and to LOG_AUTHPRIV, both off by
+		 * default, so an operator reading the ordinary log could not tell a failed
+		 * login from no login at all (#163). A warning, so it shows at the default
+		 * level of 4 without turning on anything else.
+		 */
+		$this->logWrite($this->compileLogParams(
+			$admin ? 'Admin auth failed: ip={request:ip} user={user:login}' : 'Auth failed: ip={request:ip} user={imap:login}',
+			$oAccount, $aAdditionalParams
+		), \LOG_WARNING, 'LOGIN');
+
 		if (($this->oConfig->Get('logs', 'auth_logging', false) || $this->oConfig->Get('logs', 'auth_syslog', false))
 		 && \openlog(\Tachyon\Util\Log::ident(), 0, \LOG_AUTHPRIV)) {
 			\syslog(\LOG_ERR, $this->compileLogParams(

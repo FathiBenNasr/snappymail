@@ -45,7 +45,7 @@ class StderrStream extends \MailSo\Log\Driver
 		$this->bStreamIsSink = static::isDevNull($rStream);
 	}
 
-	protected function writeImplementation($mDesc) : bool
+	protected function writeImplementation($mDesc, int $iType = \LOG_INFO) : bool
 	{
 		if ($this->bStreamIsSink) {
 			// Through the SAPI instead. Under FastCGI that is the stderr

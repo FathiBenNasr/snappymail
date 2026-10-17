@@ -31,7 +31,7 @@ class File extends \MailSo\Log\Driver
 		$this->sLoggerFileName = $sLoggerFileName;
 	}
 
-	protected function writeImplementation($mDesc) : bool
+	protected function writeImplementation($mDesc, int $iType = \LOG_INFO) : bool
 	{
 		if (\is_array($mDesc)) {
 			$mDesc = \implode("\n\t", $mDesc);

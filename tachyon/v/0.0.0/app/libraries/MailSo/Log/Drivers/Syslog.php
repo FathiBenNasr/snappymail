@@ -18,22 +18,29 @@ namespace MailSo\Log\Drivers;
  */
 class Syslog extends \MailSo\Log\Driver
 {
-	private int $iLogLevel = 0;
+	private bool $bAvailable = false;
 
 	function __construct()
 	{
 		parent::__construct();
 
-		if (\is_callable('openlog')) {
-			$this->iLogLevel = \defined('LOG_INFO') ? LOG_INFO : 6;
-		}
+		$this->bAvailable = \is_callable('openlog');
 	}
 
-	protected function writeImplementation($mDesc) : bool
+	/**
+	 * With the message's own severity, not a fixed one. Everything used to go out
+	 * as LOG_INFO whatever it was, so an error and a debug line reached syslog at
+	 * the same priority and filtering on it did nothing, which is most of the
+	 * reason to send logs there at all (#163).
+	 */
+	protected function writeImplementation($mDesc, int $iType = \LOG_INFO) : bool
 	{
 		$result = false;
-		if ($this->iLogLevel && \openlog(\Tachyon\Util\Log::ident(), LOG_ODELAY, LOG_USER)) {
-			$result = \syslog($this->iLogLevel, \is_array($mDesc) ? \implode(PHP_EOL, $mDesc) : $mDesc);
+		if ($this->bAvailable && \openlog(\Tachyon\Util\Log::ident(), LOG_ODELAY, LOG_USER)) {
+			$result = \syslog(
+				isset(static::PREFIXES[$iType]) ? $iType : \LOG_INFO,
+				\is_array($mDesc) ? \implode(PHP_EOL, $mDesc) : $mDesc
+			);
 			\closelog();
 		}
 		return $result;

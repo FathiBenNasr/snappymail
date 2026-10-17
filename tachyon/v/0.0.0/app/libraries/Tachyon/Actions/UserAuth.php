@@ -170,6 +170,15 @@ trait UserAuth
 		}
 
 		$this->imapConnect($oAccount, true);
+
+		// Notice, so it lands one level below the default and can be had without
+		// the per-request info noise. There was no successful-login line at all
+		// before, which left level 5 showing nothing and level 6 showing
+		// everything (#163).
+		$this->logWrite($this->compileLogParams(
+			'Auth OK: ip={request:ip} user={imap:login}', $oAccount
+		), \LOG_NOTICE, 'LOGIN');
+
 		if ($bMainAccount) {
 			$this->StorageProvider()->Put($oAccount, StorageType::SESSION, Utils::GetSessionToken(), 'true');
 
