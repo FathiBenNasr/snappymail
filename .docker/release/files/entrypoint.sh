@@ -72,7 +72,19 @@ sed 's/^auth_syslog = .*/auth_syslog = Off/' -i $TACHYON_CONFIG_FILE
     while ! nc -vz -w 1 127.0.0.1 9000 > /dev/null 2>&1; do echo "[INFO] Checking whether php-fpm is alive"; sleep 1; done
     # Create tachyon admin password if absent
     TACHYON_ADMIN_PASSWORD_FILE=/var/lib/tachyon/_data_/_default_/admin_password.txt
-    if [ ! -f "$TACHYON_ADMIN_PASSWORD_FILE" ]; then
+    # Three cases, and only the last of them is a problem. The file holds the
+    # generated password and is written once, on the first run; an administrator
+    # who has read it and deleted it, which is the sensible thing to do with a
+    # password in clear, is in the same position as one who set their own. Both
+    # have admin_password in the configuration, so the server generates nothing
+    # and the file never comes back. Keying off the file alone meant every
+    # upgrade of a working installation announced a failure that had not
+    # happened (#158).
+    if [ -f "$TACHYON_ADMIN_PASSWORD_FILE" ]; then
+        echo "[INFO] Tachyon Admin Panel ready at http://localhost:8888/?admin. Login using password in $TACHYON_ADMIN_PASSWORD_FILE"
+    elif grep -q '^[[:space:]]*admin_password[[:space:]]*=[[:space:]]*"[^"]' "$TACHYON_CONFIG_FILE"; then
+        echo "[INFO] Tachyon Admin Panel ready at http://localhost:8888/?admin, using the password already configured"
+    else
         echo "[INFO] Creating Tachyon admin password file: $TACHYON_ADMIN_PASSWORD_FILE"
         wget -T 1 -qO- 'http://127.0.0.1:8888/?/AdminAppData/0/12345/' > /dev/null
         # Said only once there is something to say it about. This used to be
