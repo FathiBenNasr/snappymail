@@ -354,15 +354,33 @@ trait Calendar
 		$sPassword = $this->GetActionParam('Password', '');
 		$mData = $this->getCalendarSyncData($oAccount);
 
-		return $this->DefaultResponse($this->setCalendarSyncData($oAccount, array(
-			'Mode' => \intval($this->GetActionParam('Mode', '0')),
+		$iMode = \intval($this->GetActionParam('Mode', '0'));
+		$sUrl = $this->GetActionParam('Url', '');
+
+		$bResult = $this->setCalendarSyncData($oAccount, array(
+			'Mode' => $iMode,
 			'User' => $this->GetActionParam('User', ''),
 			// The client never receives the stored password, only a placeholder
 			'Password' => static::APP_DUMMY === $sPassword
 				? (isset($mData['Password']) ? $mData['Password'] : '')
 				: $sPassword,
-			'Url' => $this->GetActionParam('Url', '')
-		)));
+			'Url' => $sUrl
+		));
+
+		/**
+		 * Clearing the URL or switching sync off has to take the calendars with
+		 * it. Sync() is what prunes what the server no longer offers, and it will
+		 * never run again, so this is the last chance to remove them.
+		 *
+		 * Deliberately here and not wherever a disabled config is noticed: a
+		 * password that can no longer be decrypted also reads as disabled, and
+		 * that must not delete anything. This is an explicit save by the user.
+		 */
+		if ($bResult && (!$iMode || !\strlen(\trim($sUrl)))) {
+			$oProvider->PurgeCalendars(array());
+		}
+
+		return $this->DefaultResponse($bResult);
 	}
 
 	public function DoTestCalendarSyncData() : array

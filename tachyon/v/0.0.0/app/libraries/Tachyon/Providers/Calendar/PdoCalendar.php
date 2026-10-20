@@ -455,6 +455,8 @@ class PdoCalendar
 			$this->logWrite("Sync finished with {$this->iSyncSkipped} skipped", \LOG_WARNING, 'Calendar');
 		}
 
+		$this->pruneCalendars(\array_keys($aRemoteCalendars));
+
 		return true;
 	}
 
@@ -721,7 +723,18 @@ class PdoCalendar
 	{
 		// The collection path is the stable identity; the display name can change
 		$sUuid = \sha1($sDavPath);
-		$oCalendar = $this->GetCalendarByUuid($sUuid);
+		// Not GetCalendarByUuid(), which hides a row pruneCalendars() flagged. A
+		// path that is back in the listing clears the flag below; looking past it
+		// here would insert a second row for the same uuid.
+		$oStmt = $this->prepareAndExecute(
+			'SELECT id_calendar FROM tachyon_cal_calendars WHERE id_user = :id_user AND uuid = :uuid',
+			array(
+				':id_user' => array($this->iUserID, \PDO::PARAM_INT),
+				':uuid' => array($sUuid, \PDO::PARAM_STR)
+			)
+		);
+		$bKnown = $oStmt && $oStmt->fetch(\PDO::FETCH_ASSOC);
+		$oStmt && $oStmt->closeCursor();
 
 		$aParams = array(
 			':id_user' => array($this->iUserID, \PDO::PARAM_INT),
@@ -734,10 +747,10 @@ class PdoCalendar
 			':changed' => array(\time(), \PDO::PARAM_INT)
 		);
 
-		if ($oCalendar) {
+		if ($bKnown) {
 			$this->prepareAndExecute(
 				'UPDATE tachyon_cal_calendars SET name = :name, color = :color, timezone = :timezone,'
-				. ' dav_path = :dav_path, read_only = :read_only, changed = :changed'
+				. ' dav_path = :dav_path, read_only = :read_only, changed = :changed, deleted = 0'
 				. ' WHERE id_user = :id_user AND uuid = :uuid',
 				$aParams
 			);
@@ -832,6 +845,148 @@ class PdoCalendar
 				':id_event' => array($iEventId, \PDO::PARAM_INT)
 			)
 		);
+	}
+
+	/**
+	 * Reconciles the stored calendars with what discovery returned.
+	 *
+	 * A changed CalDAV URL leaves the calendars of the old one behind: still
+	 * valid rows pointing at a path nothing lists any more, sitting next to the
+	 * new ones for ever, because storeCalendar() only inserts and updates.
+	 *
+	 * Takes two runs to delete anything, because one listing is not evidence. A
+	 * PROPFIND answers per href, and propFind() keeps only each href's 200
+	 * propstat, so a collection the server refused with 403, 404 or 500 while
+	 * answering for the others arrives as an empty property set, fails
+	 * isDAVCalendar(), and is absent from an otherwise healthy listing. That is
+	 * indistinguishable here from a calendar the user deleted. So the first miss
+	 * only flags the row, which hides it from GetCalendars() and fixes the
+	 * duplicate the user sees, and the events stay put. A later listing that
+	 * carries the path again clears the flag in storeCalendar(). Two misses in a
+	 * row is a deletion.
+	 *
+	 * @param string[] $aKeepDavPaths
+	 */
+	private function pruneCalendars(array $aKeepDavPaths) : void
+	{
+		$aRows = $this->calendarPurgeRows();
+		$aFlag = array();
+		$aDrop = array();
+
+		foreach (static::calendarsToPurge($aRows, $aKeepDavPaths) as $iCalendarId) {
+			if (empty($aRows[$iCalendarId]['deleted'])) {
+				$aFlag[] = $iCalendarId;
+			} else {
+				$aDrop[] = $iCalendarId;
+			}
+		}
+
+		foreach ($aFlag as $iCalendarId) {
+			$this->prepareAndExecute(
+				'UPDATE tachyon_cal_calendars SET deleted = 1, changed = :changed'
+				. ' WHERE id_user = :id_user AND id_calendar = :id_calendar',
+				array(
+					':id_user' => array($this->iUserID, \PDO::PARAM_INT),
+					':id_calendar' => array($iCalendarId, \PDO::PARAM_INT),
+					':changed' => array(\time(), \PDO::PARAM_INT)
+				)
+			);
+		}
+		if ($aFlag) {
+			$this->logWrite(\count($aFlag) . ' calendar(s) missing from the listing, hidden for now',
+				\LOG_NOTICE, 'Calendar');
+		}
+
+		$iDropped = $this->deleteCalendars($aDrop);
+		if ($iDropped) {
+			$this->logWrite("Removed {$iDropped} calendar(s) the server no longer offers",
+				\LOG_NOTICE, 'Calendar');
+		}
+	}
+
+	/**
+	 * Deletes stored calendars outside the keep list at once, events and all.
+	 *
+	 * For the case pruneCalendars() cannot help with: the user cleared the URL or
+	 * set sync to No, so no later run will confirm anything. Their explicit
+	 * action is the evidence.
+	 *
+	 * @param string[] $aKeepDavPaths Empty removes all.
+	 */
+	public function PurgeCalendars(array $aKeepDavPaths) : int
+	{
+		return $this->deleteCalendars(
+			static::calendarsToPurge($this->calendarPurgeRows(), $aKeepDavPaths)
+		);
+	}
+
+	/** id_calendar => row, for the whole account, flagged rows included */
+	private function calendarPurgeRows() : array
+	{
+		$oStmt = $this->prepareAndExecute(
+			'SELECT id_calendar, dav_path, deleted FROM tachyon_cal_calendars WHERE id_user = :id_user',
+			array(':id_user' => array($this->iUserID, \PDO::PARAM_INT))
+		);
+		if (!$oStmt) {
+			return array();
+		}
+
+		$aRows = array();
+		foreach ($oStmt->fetchAll(\PDO::FETCH_ASSOC) as $aRow) {
+			$aRows[(int) $aRow['id_calendar']] = $aRow;
+		}
+		return $aRows;
+	}
+
+	/** @param int[] $aCalendarIds */
+	private function deleteCalendars(array $aCalendarIds) : int
+	{
+		foreach ($aCalendarIds as $iCalendarId) {
+			$this->prepareAndExecute(
+				'DELETE FROM tachyon_cal_events WHERE id_user = :id_user AND id_calendar = :id_calendar',
+				array(
+					':id_user' => array($this->iUserID, \PDO::PARAM_INT),
+					':id_calendar' => array($iCalendarId, \PDO::PARAM_INT)
+				)
+			);
+			$this->prepareAndExecute(
+				'DELETE FROM tachyon_cal_calendars WHERE id_user = :id_user AND id_calendar = :id_calendar',
+				array(
+					':id_user' => array($this->iUserID, \PDO::PARAM_INT),
+					':id_calendar' => array($iCalendarId, \PDO::PARAM_INT)
+				)
+			);
+		}
+
+		return \count($aCalendarIds);
+	}
+
+	/**
+	 * Which stored calendars are not in the keep list, by id.
+	 *
+	 * Both sides are compared without a trailing slash: listCalendarCollections()
+	 * appends one and a path configured by hand may not have it, so a raw string
+	 * compare would drop a calendar that is still there.
+	 *
+	 * @param array $aRows id_calendar and dav_path, as stored
+	 * @param string[] $aKeepDavPaths
+	 * @return int[]
+	 */
+	public static function calendarsToPurge(array $aRows, array $aKeepDavPaths) : array
+	{
+		$aKeep = array();
+		foreach ($aKeepDavPaths as $sPath) {
+			$aKeep[] = \rtrim(\trim((string) $sPath), '\\/');
+		}
+
+		$aDrop = array();
+		foreach ($aRows as $aRow) {
+			if (!\in_array(\rtrim(\trim((string) ($aRow['dav_path'] ?? '')), '\\/'), $aKeep, true)) {
+				$aDrop[] = (int) $aRow['id_calendar'];
+			}
+		}
+
+		return $aDrop;
 	}
 
 	private function flushDeletedEvents(int $iCalendarId) : void

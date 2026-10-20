@@ -67,6 +67,18 @@ class Calendar extends AbstractProvider
 	}
 
 	/**
+	 * Removes stored calendars outside $aKeepDavPaths. Not on CalendarInterface,
+	 * since only a DAV backed driver has paths to compare against.
+	 *
+	 * @param string[] $aKeepDavPaths Empty removes all.
+	 */
+	public function PurgeCalendars(array $aKeepDavPaths) : int
+	{
+		return ($this->IsActive() && \method_exists($this->oDriver, 'PurgeCalendars'))
+			? $this->oDriver->PurgeCalendars($aKeepDavPaths) : 0;
+	}
+
+	/**
 	 * Not on CalendarInterface: only a DAV backed driver has a connection to
 	 * configure, so a plugin driver may legitimately lack it.
 	 */
