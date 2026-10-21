@@ -36,7 +36,13 @@
 					if (urls.length) {
 						// TODO: other editors and text/plain
 						// https://github.com/the-djmaze/snappymail/issues/981
-						view.oEditor.editor.squire.insertHTML(urls.join("<br>"));
+						const squire = view.oEditor.editor.squire,
+							range = squire.getSelection(),
+							// Files picked in a later visit to the dialog landed at the
+							// end of the line the previous ones were on (#117)
+							atLineStart = !range.startOffset
+								&& !range.startContainer.textContent.trim().length;
+						squire.insertHTML((atLineStart ? '' : '<br>') + urls.join("<br>"));
 					}
 				});
 			};
