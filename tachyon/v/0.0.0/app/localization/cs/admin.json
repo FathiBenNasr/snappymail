@@ -1,187 +1,234 @@
 {
-  "GLOBAL": {
-    "ADD": "Přidat",
-    "CLOSE": "Zavřít",
-    "SAVE": "Uložit",
-    "TEST": "Test",
-    "UPDATE": "Aktualizovat",
-    "USERNAME": "Uživatelské jméno",
-    "PASSWORD": "Heslo",
-    "CANCEL": "Zrušit",
-    "SEARCH": "Nebyly nalezeny žádné kontakty",
-    "YES": "Ano",
-    "NO": "Ne"
-  },
-  "LOGIN": {
-    "LABEL_LOGIN": "Login",
-    "LABEL_TOTP": "TOTP code",
-    "BUTTON_LOGIN": "Přihlásit do administrace"
-  },
-  "TOP_PANEL": {
-    "LABEL_ADMIN_PANEL": "Administrační panel"
-  },
-  "SETTINGS_LABELS": {
-    "GENERAL": "Základní",
-    "LOGIN": "Login",
-    "BRANDING": "Branding",
-    "CONTACTS": "Kontakty",
-    "DOMAINS": "Domény",
-    "SECURITY": "Zabezpečení",
-    "PACKAGES": "Balíčky",
-    "CONFIG": "Config",
-    "ABOUT": "Info"
-  },
-  "TAB_GENERAL": {
-    "LEGEND_INTERFACE": "Rozhraní",
-    "LABEL_LANGUAGE": "Jazyk",
-    "LABEL_LANGUAGE_ADMIN": "Jazyk (administrace)",
-    "LABEL_THEME": "Motiv",
-    "LABEL_ALLOW_LANGUAGES_ON_SETTINGS": "Povolit výběr jazyka na přihlašovací obrazovce",
-    "LABEL_ALLOW_THEMES_ON_SETTINGS": "Povolit výběr motivu na přihlašovací obrazovce",
-    "LABEL_ALLOW_BACKGROUND_ON_SETTINGS": "Povolit výběr pozadí na přihlašovací obrazovce",
-    "LABEL_SHOW_THUMBNAILS": "Zobrazovat miniatury (přílohy)",
-    "LEGEND_MAIN": "Hlavní",
-    "LABEL_ATTACHMENT_SIZE_LIMIT": "Limit velikosti přílohy",
-    "LABEL_ALLOW_ADDITIONAL_ACCOUNTS": "Povolit přidávat další účty",
-    "LABEL_ALLOW_IDENTITIES": "Povolit další identity",
-    "ALERT_DATA_ACCESS": "Adresář s Tachyon daty je veřejně přístupný. Nakonfigurujte prosím webový server tak, aby skryl adresář data z externího přístupu. Více zde:",
-    "ALERT_WARNING": "Upozornění!",
-    "HTML_ALERT_WEAK_PASSWORD": "Používáte výchozí administrátorské heslo.\n<br>\nZ bezpečnostních důvodů jej prosím\n<strong><a href=\"#/security\">změňte</a></strong>.\n"
-  },
-  "TAB_LOGIN": {
-    "LEGEND_LOGIN_SCREEN": "Přihlašovací obrazovka",
-    "LABEL_DEFAULT_DOMAIN": "Výchozí doména",
-    "LABEL_DETERMINE_USER_DOMAIN": "Zkoušet odvodit doménu z uživatelského jména",
-    "LABEL_ALLOW_LANGUAGES_ON_LOGIN": "Povolit výběr jazyka na přihlašovací obrazovce",
-    "LABEL_DETERMINE_USER_LANGUAGE": "Zkoušet odvodit jazyk pro uživatele"
-  },
-  "TAB_BRANDING": {
-    "LEGEND_BRANDING": "Branding",
-    "LABEL_PAGE_TITLE": "Nadpis stránky",
-    "LABEL_LOADING_DESCRIPTION": "Načítání popisu",
-    "LABEL_FAVICON_URL": "Favicon",
-    "BUTTON_DELETE_LOGO": "Odstranit logo",
-    "BUTTON_UPLOAD_LOGO": "Nahrát logo",
-    "LABEL_LOGIN_LOGO": "Logo",
-    "LABEL_NO_LOGO": "Žádné logo není nastaveno",
-    "LEGEND_LOGO": "Logo přihlašovací stránky"
-  },
-  "TAB_CONTACTS": {
-    "LEGEND_CONTACTS": "Kontakty",
-    "LEGEND_STORAGE": "Úložiště (PDO)",
-    "LABEL_ENABLE_CONTACTS": "Povolit kontakty",
-    "LABEL_ALLOW_SYNC": "Povolit synchronizaci kontaktů (přes externí CardDAV server)",
-    "LABEL_STORAGE_TYPE": "Typ",
-    "LABEL_STORAGE_DSN": "Dsn",
-    "LABEL_STORAGE_USER": "Uživatel",
-    "LABEL_STORAGE_PASSWORD": "Heslo",
-    "SQLITE_GLOBAL": "Použít globální databázi místo databáze pro každý účet",
-    "ALERT_NOTICE": "Upozornění!",
-    "SUGGESTIONS_LIMIT": "Suggestions limit",
-    "HTML_ALERT_DO_NOT_USE_THIS_DATABASE": "Nepoužívejte tento typ databáze při velkém počtu aktivních uživatelů.",
-    "HTML_ALERT_DOES_NOT_SUPPORTED": "Váš systém nepodporuje kontakty.\n<br>\nJe potřeba nainstalovat nebo povolit <strong>PDO (SQLite / MySQL / PostgreSQL)</strong>\nrozšíření na vašem serveru.\n"
-  },
-  "TAB_DOMAINS": {
-    "LEGEND_DOMAINS": "Domény",
-    "BUTTON_ADD_DOMAIN": "Přidat Doménu",
-    "BUTTON_ADD_ALIAS": "Přidat alias",
-    "DELETE_ARE_YOU_SURE": "Jste si jistí?",
-    "HTML_DOMAINS_HELPER": "Seznam domén, ke kterým je možné přistupovat přes webmail.\n<br>\nKlikněte na jméno domény pro její konfiguraci.\n"
-  },
-  "TAB_SECURITY": {
-    "LEGEND_SECURITY": "Zabezpečení",
-    "LABEL_USE_IMAGE_PROXY": "Použít lokální proxy pro externí obrázky",
-    "LABEL_AUTO_VERIFY": "Verify signatures automatically",
-    "LABEL_SHOW_PHP_INFO": "Zobrazit PHP informace (php_info)",
-    "LEGEND_ADMIN_PANEL_ACCESS_CREDENTIALS": "Přístupové údaje administrace",
-    "LABEL_CURRENT_PASSWORD": "Současné heslo",
-    "LABEL_NEW_PASSWORD": "Nové heslo",
-    "LABEL_REPEAT_PASSWORD": "Znovu",
-    "LABEL_REQUIRE_VERIFICATION": "Vyžadovat ověření SSL certifikátu",
-    "CRYPTO": "Crypto",
-    "LABEL_ALLOW_SELF_SIGNED": "Povolit self-signed certifikáty"
-  },
-  "TAB_PACKAGES": {
-    "LABEL_ENABLE_PLUGINS": "Povolit pluginy",
-    "LEGEND_AVAILABLE_FOR_UPDATE": "Dostupné pro aktualizaci",
-    "LEGEND_AVAILABLE_FOR_INSTALLATION": "Dostupné pro instalaci",
-    "LEGEND_INSTALLED_PACKAGES": "Nainstalované balíčky",
-    "ALERT_CANNOT_ACCESS_REPOSITORY": "V tento moment se nelze připojit k repozitáři."
-  },
-  "TAB_ABOUT": {
-    "LEGEND_ABOUT": "Info",
-    "LABEL_TAG_HINT": "Jednoduchý, moderní a rychlý webový emailový klient",
-    "LABEL_ALL_RIGHTS_RESERVED": "Všechna práva vyhrazena.",
-    "HINT_READ_CHANGE_LOG": "Přečtěte si prosím change log předtím, než budete chtít provést aktualizaci.",
-    "HINT_IS_UP_TO_DATE": "Tachyon je v aktuální verzi.",
-    "HTML_NEW_VERSION": "Nová verze <b>%VERSION%</b> je k dispozici.",
-    "LABEL_UPDATING": "Aktualizuji",
-    "LABEL_CHECKING": "Kontroluji nové aktualizace",
-    "BUTTON_RELEASES": "Releases"
-  },
-  "POPUPS_DOMAIN_ALIAS": {
-    "TITLE_ADD_DOMAIN_ALIAS": "Přidat alias",
-    "LABEL_ALIAS": "Alias",
-    "LABEL_DOMAIN": "Doména"
-  },
-  "POPUPS_DOMAIN": {
-    "TITLE_ADD_DOMAIN": "Přidat Doménu",
-    "TITLE_ADD_DOMAIN_WITH_NAME": "Přidat Doménu \"%NAME%\"",
-    "TITLE_EDIT_DOMAIN": "Editovat Doménu \"%NAME%\"",
-    "LABEL_NAME": "Název",
-    "NAME_HELPER": "wildcard podporovány",
-    "LABEL_SERVER": "Server",
-    "LABEL_PORT": "Port",
-    "LABEL_SECURE": "Zabezpečení",
-    "TIMEOUT": "Timeout",
-    "DISABLE_CAPABILITIES": "Zakázat capabilities",
-    "LIMITS": "Limity",
-    "FOLDERS": "Složky",
-    "MESSAGES": "Zprávy",
-    "SECURE_OPTION_NONE": "Žádné",
-    "LABEL_ALLOW_SIEVE_SCRIPTS": "Povolit SIEVE skripty",
-    "LABEL_USE_SHORT_LOGIN": "Používat krátký login",
-    "LABEL_LOWERCASE_LOGIN": "Lowercase login (case-insensitive)",
-    "LABEL_USE_AUTH": "Používat autorizaci",
-    "LABEL_SET_SENDER": "Použít přihlašovací jméno jako odesílatele",
-    "LABEL_AUTH_PLAIN_LINE": "Vynutit přihlášení pomocí jednoho příkazu AUTH PLAIN",
-    "LABEL_USE_PHP_MAIL": "Používat php mail() funkci",
-    "BUTTON_WHITE_LIST": "White List",
-    "NEW_DOMAIN_DESC": "Konfigurace této domény umožní používat <strong>%NAME%</strong> adresy.",
-    "WHITE_LIST_ALERT": "Seznam domén s povoleným uživatelským přístupem\nPoužijte mezeru pro jejich oddělení.\n",
-    "VALID_SPAM_HEADERS": "Valid SPAM headers",
-    "VALID_VIRUS_HEADERS": "Valid virus headers"
-  },
-  "POPUPS_PLUGIN": {
-    "TITLE_PLUGIN": "Plugin",
-    "DESC_NOTHING_TO_CONFIGURE": "Není zde nic ke konfiguraci"
-  },
-  "POPUPS_ASK": {
-    "DESC_WANT_CLOSE_THIS_WINDOW": "Jste si jistí, že opravdu chcete zavřít toto okno?"
-  },
-  "POPUPS_LANGUAGES": {
-    "TITLE_LANGUAGES": "Vyberte váš jazyk"
-  },
-  "HINTS": {
-    "BETA": "beta",
-    "WARNING": "Varování!"
-  },
-  "ERRORS": {
-    "DOMAIN_ALREADY_EXISTS": "Doména již existuje",
-    "UNKNOWN_ERROR": "Neznámá chyba"
-  },
-  "NOTIFICATIONS": {
-    "RequestError": "Request failed",
-    "RequestAborted": "Request is aborted",
-    "RequestTimeout": "Request timed out",
-    "InvalidToken": "Neplatný token",
-    "AuthError": "Chyba autorizace",
-    "DomainAlreadyExists": "Tato doména již existuje",
-    "CantSavePluginSettings": "Nastavení se nepodařilo uložit",
-    "CantInstallPackage": "Instalace balíčku se nezdařila",
-    "CantDeletePackage": "Odstranění balíčku se nezdařilo",
-    "InvalidPluginPackage": "Nevalidní balíček",
-    "UnsupportedPluginPackage": "Nepodporovaný balíček rozšíření",
-    "UnknownError": "Neznámá chyba"
-  }
+	"GLOBAL": {
+		"ADD": "Přidat",
+		"CLOSE": "Zavřít",
+		"SAVE": "Uložit",
+		"TEST": "Test",
+		"UPDATE": "Aktualizovat",
+		"USERNAME": "Uživatelské jméno",
+		"PASSWORD": "Heslo",
+		"CANCEL": "Zrušit",
+		"SEARCH": "Hledat",
+		"YES": "Ano",
+		"NO": "Ne",
+		"SHOW_PASSWORD": "Zobrazit heslo"
+	},
+	"LOGIN": {
+		"LABEL_LOGIN": "Login",
+		"LABEL_TOTP": "TOTP code",
+		"BUTTON_LOGIN": "Přihlásit do administrace"
+	},
+	"TOP_PANEL": {
+		"LABEL_ADMIN_PANEL": "Administrační panel"
+	},
+	"SETTINGS_LABELS": {
+		"GENERAL": "Základní",
+		"LOGIN": "Login",
+		"BRANDING": "Branding",
+		"CONTACTS": "Kontakty",
+		"DOMAINS": "Domény",
+		"SECURITY": "Zabezpečení",
+		"PACKAGES": "Balíčky",
+		"CONFIG": "Config",
+		"ABOUT": "Info",
+		"CALENDAR": "Kalendář"
+	},
+	"TAB_GENERAL": {
+		"LEGEND_INTERFACE": "Rozhraní",
+		"LABEL_LANGUAGE": "Jazyk",
+		"LABEL_LANGUAGE_ADMIN": "Jazyk (administrace)",
+		"LABEL_THEME": "Motiv",
+		"LABEL_ALLOW_LANGUAGES_ON_SETTINGS": "Povolit výběr jazyka na přihlašovací obrazovce",
+		"LABEL_ALLOW_THEMES_ON_SETTINGS": "Povolit výběr motivu na přihlašovací obrazovce",
+		"LABEL_ALLOW_BACKGROUND_ON_SETTINGS": "Povolit výběr pozadí na přihlašovací obrazovce",
+		"LABEL_SHOW_THUMBNAILS": "Zobrazovat miniatury (přílohy)",
+		"LEGEND_MAIN": "Hlavní",
+		"LABEL_ATTACHMENT_SIZE_LIMIT": "Limit velikosti přílohy",
+		"LABEL_ALLOW_ADDITIONAL_ACCOUNTS": "Povolit přidávat další účty",
+		"LABEL_ALLOW_IDENTITIES": "Povolit další identity",
+		"ALERT_DATA_ACCESS": "Adresář s Tachyon daty je veřejně přístupný. Nakonfigurujte prosím webový server tak, aby skryl adresář data z externího přístupu. Více zde:",
+		"ALERT_WARNING": "Upozornění!",
+		"HTML_ALERT_WEAK_PASSWORD": "Používáte výchozí administrátorské heslo.\n<br>\nZ bezpečnostních důvodů \n<strong><a href=\"#/security\">změňte</a></strong>.\nheslo nyní na nějaké jiné\n",
+		"LABEL_MESSAGES_PER_PAGE": "Zpráv na stránku",
+		"HINT_MESSAGES_PER_PAGE": "Výchozí nastavení pro uživatele, který si nezvolil vlastní.",
+		"LABEL_MESSAGES_PER_PAGE_MAX": "Limit zpráv na stránku",
+		"HINT_MESSAGES_PER_PAGE_MAX": "Maximální hodnota, kterou může uživatel zvolit. Vyšší výchozí hodnoty se omezí na tento limit."
+	},
+	"TAB_LOGIN": {
+		"LEGEND_LOGIN_SCREEN": "Přihlašovací obrazovka",
+		"LABEL_DEFAULT_DOMAIN": "Výchozí doména",
+		"LABEL_DETERMINE_USER_DOMAIN": "Zkoušet odvodit doménu z uživatelského jména",
+		"LABEL_ALLOW_LANGUAGES_ON_LOGIN": "Povolit výběr jazyka na přihlašovací obrazovce",
+		"LABEL_DETERMINE_USER_LANGUAGE": "Zkoušet odvodit jazyk pro uživatele"
+	},
+	"TAB_BRANDING": {
+		"LEGEND_BRANDING": "Branding",
+		"LABEL_PAGE_TITLE": "Nadpis stránky",
+		"LABEL_LOADING_DESCRIPTION": "Načítání popisu",
+		"LABEL_FAVICON_URL": "Favicon",
+		"BUTTON_DELETE_LOGO": "Odstranit logo",
+		"BUTTON_UPLOAD_LOGO": "Nahrát logo",
+		"LABEL_LOGIN_LOGO": "Logo",
+		"LABEL_NO_LOGO": "Žádné logo není nastaveno",
+		"LEGEND_LOGO": "Přihlašovací logo",
+		"LABEL_LOGIN_FOOTER": "Záhlaví přihlašovací stránky",
+		"HINT_LOGIN_FOOTER": "Zobrazí se pod přihlašovacím formulářem (tiráž, podpora). Formát je prostý text: http(s) adresy se automaticky převedou na odkazy, HTML formátování se ignoruje.",
+		"LABEL_FAVICON": "Favikon",
+		"HINT_FAVICON": "Ikona Tachyon respektuje barevné schéma prohlížeče. Nahrajte si vlastní, nebo zadejte odkaz na ikonu hostovanou jinde.",
+		"FAVICON_MODE_DEFAULT": "Tachyon ikony",
+		"FAVICON_MODE_CUSTOM": "Nahrát soubor",
+		"FAVICON_MODE_URL": "Externí URL",
+		"LABEL_FAVICON_FILE": "Favikon soubor",
+		"HINT_FAVICON_FILE": "Doporučujeme formát SVG: jako jediný se dokáže přizpůsobit jakékoli velikosti požadované prohlížečem a respektovat jeho barevné schéma. Formáty PNG, ICO, GIF a WebP jsou také podporovány, ale použijí se v takové velikosti, v jaké je nahrajete.",
+		"LABEL_LOGO_MODE": "Logo přihlašovací stránky",
+		"HINT_LOGO_MODE": "Logo Tachyon přebírá barvu motivu, takže je čitelné ve světlém i tmavém režimu. Zvolte „Vlastní nahrané“ pro vložení vlastního obrázku, nebo „Bez loga“ pro zobrazení samotného textu.",
+		"LOGO_MODE_DEFAULT": "Tachyon logo",
+		"LOGO_MODE_CUSTOM": "Vlastní nahrané",
+		"LOGO_MODE_NONE": "Bez loga",
+		"LABEL_LOGO_LIGHT": "Logo pro světlé pozadí",
+		"LABEL_LOGO_DARK": "Logo pro tmavé pozadí",
+		"HINT_LOGO_LIGHT": "Tmavá grafika, zobrazuje se ve světlých motivech.",
+		"HINT_LOGO_DARK": "Světlá grafika pro tmavé motivy. Pokud není nahrána, použije se ta výše uvedená.",
+		"ERROR_LOGO_UPLOAD": "Nahrajte soubor. Pouze PNG, JPG, GIF, SVG and WebP jsou akceptovány."
+	},
+	"TAB_CONTACTS": {
+		"LEGEND_CONTACTS": "Kontakty",
+		"LEGEND_STORAGE": "Úložiště (PDO)",
+		"LABEL_ENABLE_CONTACTS": "Povolit kontakty",
+		"LABEL_ALLOW_SYNC": "Povolit synchronizaci kontaktů (přes externí CardDAV server)",
+		"LABEL_STORAGE_TYPE": "Typ",
+		"LABEL_STORAGE_DSN": "Dsn",
+		"LABEL_STORAGE_USER": "Uživatel",
+		"LABEL_STORAGE_PASSWORD": "Heslo",
+		"SQLITE_GLOBAL": "Použít globální databázi místo databáze pro každý účet",
+		"ALERT_NOTICE": "Upozornění!",
+		"SUGGESTIONS_LIMIT": "Limit návrhů",
+		"HTML_ALERT_DO_NOT_USE_THIS_DATABASE": "Nepoužívejte tento typ databáze při velkém počtu aktivních uživatelů.",
+		"HTML_ALERT_DOES_NOT_SUPPORTED": "Váš systém nepodporuje kontakty.\n<br>\nJe potřeba nainstalovat nebo povolit <strong>PDO (SQLite / MySQL / PostgreSQL)</strong> rozšíření na vašem serveru.\n",
+		"TEST_OK_BUT_DISABLED": "Databáze odpověděla, ale kontakty jsou vypnuté, takže se nic z toho nedostane k vašim uživatelům. Výše zapněte možnost „Povolit kontakty“.",
+		"COMPOSE_LIMIT": "Maximální počet vybraných příjemců",
+		"BCC_LIMIT": "Doporučit skrytou kopii od tohoto počtu příjemců"
+	},
+	"TAB_DOMAINS": {
+		"LEGEND_DOMAINS": "Domény",
+		"BUTTON_ADD_DOMAIN": "Přidat Doménu",
+		"BUTTON_ADD_ALIAS": "Přidat alias",
+		"DELETE_ARE_YOU_SURE": "Jste si jistí?",
+		"HTML_DOMAINS_HELPER": "Seznam domén, ke kterým je možné přistupovat přes webmail.\n<br>\nKlikněte na jméno domény pro její konfiguraci.\n"
+	},
+	"TAB_SECURITY": {
+		"LEGEND_SECURITY": "Zabezpečení",
+		"LABEL_USE_IMAGE_PROXY": "Použít lokální proxy pro externí obrázky",
+		"LABEL_AUTO_VERIFY": "Verify signatures automatically",
+		"LABEL_SHOW_PHP_INFO": "Zobrazit PHP informace (php_info)",
+		"LEGEND_ADMIN_PANEL_ACCESS_CREDENTIALS": "Přístupové údaje administrace",
+		"LABEL_CURRENT_PASSWORD": "Současné heslo",
+		"LABEL_NEW_PASSWORD": "Nové heslo",
+		"LABEL_REPEAT_PASSWORD": "Zopakujte heslo",
+		"LABEL_REQUIRE_VERIFICATION": "Vyžadovat ověření SSL certifikátu",
+		"CRYPTO": "Crypto",
+		"LABEL_ALLOW_SELF_SIGNED": "Povolit self-signed certifikáty",
+		"LABEL_TOTP_CLEAR": "Vyčistit",
+		"LABEL_AUTO_DECRYPT": "Automaticky dešifrovat zprávy, pokud není vyžadováno heslo",
+		"HINT_CURRENT_PASSWORD": "Pro uložení změn na této záložce zadejte aktuální heslo.",
+		"LABEL_TOTP_CONFIRM": "Potvrzující kód",
+		"HINT_TOTP_CONFIRM": "Naskenujte výše uvedený kód do své ověřovací aplikace (authenticator) a zadejte zobrazených šest číslic. Bez tohoto kroku nebude dvoufázové ověření aktivováno."
+	},
+	"TAB_PACKAGES": {
+		"LABEL_ENABLE_PLUGINS": "Povolit pluginy",
+		"LEGEND_AVAILABLE_FOR_UPDATE": "Dostupné pro aktualizaci",
+		"LEGEND_AVAILABLE_FOR_INSTALLATION": "Dostupné pro instalaci",
+		"LEGEND_INSTALLED_PACKAGES": "Nainstalované balíčky",
+		"ALERT_CANNOT_ACCESS_REPOSITORY": "V tento moment se nelze připojit k repozitáři."
+	},
+	"TAB_ABOUT": {
+		"LEGEND_ABOUT": "Info",
+		"LABEL_TAG_HINT": "Jednoduchý, moderní a rychlý webový emailový klient",
+		"LABEL_ALL_RIGHTS_RESERVED": "Všechna práva vyhrazena.",
+		"HINT_READ_CHANGE_LOG": "Přečtěte si prosím change log předtím, než budete chtít provést aktualizaci.",
+		"HINT_IS_UP_TO_DATE": "Tachyon je v aktuální verzi.",
+		"HTML_NEW_VERSION": "Nová verze <b>%VERSION%</b> je k dispozici.",
+		"LABEL_UPDATING": "Aktualizuji",
+		"LABEL_CHECKING": "Kontroluji nové aktualizace",
+		"BUTTON_RELEASES": "Vydání",
+		"LABEL_ALLOW_UPDATE": "Povolit aktualizace z tohoto panelu",
+		"HINT_ALLOW_UPDATE": "Možné pouze v případě, že má webový server právo zápisu do souborů aplikace. Instalace z balíčků (deb, rpm, cPanel) se místo toho aktualizují pomocí příslušného správce balíčků.",
+		"LEGEND_CLEANUP": "Staré verze",
+		"HINT_CLEANUP": "Každá aktualizace se instaluje vedle té předchozí, která se nikdy neodstraňuje. Aktuálně spuštěnou verzi nelze vybrat. V seznamu se zobrazují také složky z dřívějších instalací systémů RainLoop nebo SnappyMail.",
+		"LABEL_CLEANUP_PRODUCT": "Aplikace",
+		"LABEL_CLEANUP_VERSION": "Verze",
+		"LABEL_CLEANUP_SIZE": "Velikost",
+		"LABEL_CLEANUP_RUNNING": "(spuštěná)",
+		"BUTTON_CLEANUP": "Uvolnit a smazat vybrané",
+		"CONFIRM_DELETE_VERSIONS": "Opravdu chcete smazat staré verze (počet: %COUNT%)? Tuto akci nelze vrátit zpět.",
+		"ERROR_DELETE_VERSIONS": "Vybrané verze se nepodařilo smazat.",
+		"LABEL_CLEANUP_DELETING": "Mažu %CURRENT% z %COUNT%",
+		"LABEL_CLEANUP_SCANNING": "Zjišťování velikosti nainstalovaných verzí",
+		"LABEL_CLEANUP_LOCKED": "(webový server nemá právo zápisu)"
+	},
+	"POPUPS_DOMAIN_ALIAS": {
+		"TITLE_ADD_DOMAIN_ALIAS": "Přidat alias",
+		"LABEL_ALIAS": "Alias",
+		"LABEL_DOMAIN": "Doména"
+	},
+	"POPUPS_DOMAIN": {
+		"TITLE_ADD_DOMAIN": "Přidat Doménu",
+		"TITLE_ADD_DOMAIN_WITH_NAME": "Přidat Doménu \"%NAME%\"",
+		"TITLE_EDIT_DOMAIN": "Editovat Doménu \"%NAME%\"",
+		"LABEL_NAME": "Název",
+		"NAME_HELPER": "wildcard podporovány",
+		"LABEL_SERVER": "Server",
+		"LABEL_PORT": "Port",
+		"LABEL_SECURE": "Zabezpečení",
+		"TIMEOUT": "Timeout",
+		"DISABLE_CAPABILITIES": "Zakázat capabilities",
+		"LIMITS": "Limity",
+		"FOLDERS": "Složky",
+		"MESSAGES": "Zprávy",
+		"SECURE_OPTION_NONE": "Žádné",
+		"LABEL_ALLOW_SIEVE_SCRIPTS": "Povolit SIEVE skripty",
+		"LABEL_USE_SHORT_LOGIN": "Používat krátký login",
+		"LABEL_LOWERCASE_LOGIN": "Přihlašovací jméno malými písmeny (nerozlišuje velikost písmen)",
+		"LABEL_USE_AUTH": "Používat autorizaci",
+		"LABEL_SET_SENDER": "Použít přihlašovací jméno jako odesílatele",
+		"LABEL_AUTH_PLAIN_LINE": "Vynutit přihlášení pomocí jednoho příkazu AUTH PLAIN",
+		"LABEL_USE_PHP_MAIL": "Používat php mail() funkci",
+		"BUTTON_WHITE_LIST": "White List",
+		"NEW_DOMAIN_DESC": "Konfigurace této domény umožní používat <strong>%NAME%</strong> adresy.",
+		"WHITE_LIST_ALERT": "Seznam domén s povoleným uživatelským přístupem\nPoužijte mezeru pro jejich oddělení.\n",
+		"VALID_SPAM_HEADERS": "Valid SPAM headers",
+		"VALID_VIRUS_HEADERS": "Valid virus headers"
+	},
+	"POPUPS_PLUGIN": {
+		"TITLE_PLUGIN": "Plugin",
+		"DESC_NOTHING_TO_CONFIGURE": "Není zde nic ke konfiguraci"
+	},
+	"POPUPS_ASK": {
+		"DESC_WANT_CLOSE_THIS_WINDOW": "Jste si jistí, že opravdu chcete zavřít toto okno?"
+	},
+	"POPUPS_LANGUAGES": {
+		"TITLE_LANGUAGES": "Vyberte váš jazyk"
+	},
+	"HINTS": {
+		"BETA": "beta",
+		"WARNING": "Varování!"
+	},
+	"ERRORS": {
+		"DOMAIN_ALREADY_EXISTS": "Doména již existuje",
+		"UNKNOWN_ERROR": "Neznámá chyba"
+	},
+	"NOTIFICATIONS": {
+		"RequestError": "Request failed",
+		"RequestAborted": "Request is aborted",
+		"RequestTimeout": "Request timed out",
+		"InvalidToken": "Neplatný token",
+		"AuthError": "Chyba autorizace",
+		"DomainAlreadyExists": "Tato doména již existuje",
+		"CantSavePluginSettings": "Nastavení se nepodařilo uložit",
+		"CantInstallPackage": "Instalace balíčku se nezdařila",
+		"CantDeletePackage": "Odstranění balíčku se nezdařilo",
+		"InvalidPluginPackage": "Nevalidní balíček",
+		"UnsupportedPluginPackage": "Nepodporovaný balíček rozšíření",
+		"UnknownError": "Neznámá chyba"
+	}
 }
