@@ -43,6 +43,10 @@
 							atLineStart = !range.startOffset
 								&& !range.startContainer.textContent.trim().length;
 						squire.insertHTML((atLineStart ? '' : '<br>') + urls.join("<br>"));
+						// The links go into the message body, so show it: picking files left
+						// the Attachments tab in front with no sign anything had happened
+						// (#117)
+						view.bodyArea();
 					}
 				});
 			};
