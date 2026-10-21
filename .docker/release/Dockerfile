@@ -31,6 +31,13 @@ FROM php:8.2-fpm-alpine AS final
 
 LABEL org.label-schema.description="Tachyon webmail client image using nginx, php-fpm on Alpine"
 
+# The Alpine index moved musl to 1.2.6-r3 while php:8.2-fpm-alpine still ships
+# r2, and musl-dev pins musl to its own revision, so every -dev package below is
+# refused: "breaks: musl-dev-1.2.6-r3[musl=1.2.6-r3]". It took out the arm64 half
+# of the v4.4.7 build, then both halves once the x86_64 index followed. Upgrading
+# musl first puts the image on the revision its own index expects.
+RUN apk upgrade --no-cache musl musl-utils
+
 # Install dependencies such as nginx
 RUN apk add --no-cache ca-certificates nginx supervisor bash
 
