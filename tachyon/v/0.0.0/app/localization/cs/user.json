@@ -45,7 +45,8 @@
 		"ATTACHMENTS": "Přílohy",
 		"REMEMBER_FOR_SESSION": "Zapamatovat pro tuto relaci",
 		"REMEMBER_PERMANENT": "Zapamatovat trvale",
-		"SHOW_PASSWORD": "Zobrazit heslo"
+		"SHOW_PASSWORD": "Zobrazit heslo",
+		"CALENDAR": "Kalendář"
 	},
 	"LOGIN": {
 		"LABEL_LOGIN": "Uživatelské jméno",
@@ -80,7 +81,8 @@
 		"SUBFOLDERS_SUBTREE": "Všechny",
 		"SUBFOLDERS_SUBTREE_ONE": "Jedna úroveň",
 		"REPLIED": "Odpovězeno",
-		"KEYWORD": "Tag"
+		"KEYWORD": "Tag",
+		"ALSO_CC": "Prohledávat i Cc"
 	},
 	"FOLDER_LIST": {
 		"BUTTON_COMPOSE": "Vytvořit",
@@ -241,7 +243,43 @@
 		"TAGS_HINT": "Tags group contacts for quick addressing. Type a tag name in the compose window to send to everyone in that group.",
 		"BUTTON_SHARE_ALL": "Vše",
 		"BUTTON_SYNC": "Synchronizace (CardDAV)",
-		"SEND_TO_ALL_CONTACT_EMAILS": "Poslat na všechny emailové adresy kontaktu"
+		"SEND_TO_ALL_CONTACT_EMAILS": "Poslat na všechny emailové adresy kontaktu",
+		"TAGS_PLACEHOLDER": "Přidejte štítek",
+		"SELECT_ALL": "Vybrat vše na této stránce",
+		"SELECT_PAGE": "Vybrat tuto stránku",
+		"SELECT_ALL_MATCHING": "Vybrat všechny odpovídající",
+		"SELECT_NONE": "Zrušit výběr",
+		"SELECTED_SOME": "%COUNT% vybráno",
+		"SELECTED_ALL": "Vybráno: %COUNT%, všechny odpovídající",
+		"BUTTON_COMPOSE_TO": "Nová zpráva pro",
+		"BUTTON_COMPOSE_CC": "Nová zpráva, příjemci v kopii (Cc)",
+		"BUTTON_COMPOSE_BCC": "Nová zpráva, příjemci ve skryté kopii (Bcc)",
+		"ASK_USE_BCC": "Počet příjemců: %COUNT%. Vložit adresy do skryté kopie (Bcc), aby zůstaly skryté?",
+		"ERROR_COMPOSE_LIMIT": "Počet vybraných kontaktů (%COUNT%) překračuje povolený limit %LIMIT% pro jednu zprávu. Nejprve snižte výběr.",
+		"COMPOSE_SKIPPED": "E-mailovou adresu mělo %USED% z %TOTAL% vybraných kontaktů. Ostatní byly vynechány.",
+		"COMPOSE_NONE_USABLE": "Žádný z vybraných %TOTAL% kontaktů nemá e-mailovou adresu.",
+		"GROUP_NO_MEMBERS": "%NAME% neobsahuje žádné členy s e-mailovou adresou.",
+		"SYNC_SKIPPED": "Synchronizace dokončena, ale %COUNT% kontakt(ů) se nepodařilo importovat. Podrobnosti viz protokol.",
+		"SAVED": "Uloženo",
+		"ADD_MENU_BDAY": "Narozeniny",
+		"ADD_MENU_IMPP": "Okamžité zprávy",
+		"ADD_MENU_ADR": "Adresa",
+		"ADD_MENU_PHOTO": "Foto",
+		"PHOTO_NONE": "Bez fotky",
+		"PHOTO_UNREADABLE": "Tento soubor nemůže být načten jako obrázek.",
+		"ADR_HOME": "Domů",
+		"ADR_TYPE": "Typ",
+		"ADR_WORK": "Práce",
+		"ADR_STREET": "Ulice",
+		"ADR_STREET_EXT": "Adresa (2. řádek)",
+		"ADR_POSTCODE": "PSČ",
+		"ADR_LOCALITY": "Město",
+		"ADR_REGION": "Region",
+		"ADR_COUNTRY": "Země",
+		"ADR_POBOX": "PO box",
+		"BUTTON_DELETE_LOCAL": "Smazat místní kontakty",
+		"SYNCED_CONTACT": "Synchronizováno se vzdáleným adresářem",
+		"CONFIRM_DELETE_LOCAL": "Chcete smazat všechny lokálně vytvořené kontakty? Kontakty synchronizované ze vzdáleného adresáře jsou označeny a nebudou odstraněny."
 	},
 	"COMPOSE": {
 		"LINK_SHOW_INPUTS": "zobrazit všechna pole",
@@ -281,7 +319,8 @@
 	"POPUPS_ADD_ACCOUNT": {
 		"TITLE_ADD_ACCOUNT": "Přidat účet",
 		"BUTTON_ADD_ACCOUNT": "Přidat",
-		"TITLE_UPDATE_ACCOUNT": "Upravit účet"
+		"TITLE_UPDATE_ACCOUNT": "Upravit účet",
+		"HINT_MAIN_NAME": "Pokud pole ponecháte prázdné, použije se název identity, případně vaše adresa (pokud název není nastaven)."
 	},
 	"POPUPS_IDENTITY": {
 		"TITLE_ADD_IDENTITY": "Opravdu přidat",
@@ -317,7 +356,13 @@
 		"CHANGE_PASS": "Změnit heslo",
 		"CURRENT_PASS": "Aktuální heslo",
 		"NEW_PASS": "Nové heslo",
-		"ASK_CRYPTKEY_PASS": "Vaše přihlašovací heslo se změnilo. Vyplňte prosím své staré přihlašovací heslo pro dešifrování dat"
+		"ASK_CRYPTKEY_PASS": "Vaše přihlašovací heslo se změnilo. Vyplňte prosím své staré přihlašovací heslo pro dešifrování dat",
+		"NO_SIGNING_KEY": "Chybí podpisový klíč pro tuto identitu",
+		"NO_KEY_FOR": "Žádný veřejný klíč pro %EMAIL%",
+		"NO_RECIPIENTS": "Nejprve přidejte příjemce",
+		"SIGN_METHOD": "Přihlašovací metoda",
+		"ENCRYPT_METHOD": "Metoda šifrování",
+		"ASK_FALLBACK": "%FAILED% selhal. Použít raději %NEXT%?"
 	},
 	"OPENPGP": {
 		"POPUP_IMPORT_TITLE": "Import OpenPGP klíče",
@@ -334,7 +379,10 @@
 		"STORE_PRIVATE_KEY_IN_GNUPG": "Uložit soukromý klíč na server v GnuPG",
 		"BACKUP_ON_SERVER": "Uložit (šifrované) na server",
 		"BACKUP_PUBLIC_KEY_ON_SERVER": "Zálohovat veřejný klíč na server",
-		"BACKUP_PRIVATE_KEY_ON_SERVER": "Zálohovat soukromý klíč na server"
+		"BACKUP_PRIVATE_KEY_ON_SERVER": "Zálohovat soukromý klíč na server",
+		"SEARCH_TRYING": "Hledám %HOST%…",
+		"SEARCH_FOUND_ON": "Nalezeno na %HOST%",
+		"SEARCH_NOT_FOUND": "Pro „%QUERY%“ nebyl na žádném keyserveru nalezen klíč."
 	},
 	"SMIME": {
 		"POPUP_IMPORT_TITLE": "Import S/MIME certifikátu",
@@ -441,7 +489,15 @@
 		"IMAGEUPLOAD": "Výběr obrázku",
 		"UNDO": "Zpět",
 		"REDO": "Znovu",
-		"REMOVESTYLE": "Odstranit styl"
+		"REMOVESTYLE": "Odstranit styl",
+		"TABLE": "Vložit tabulku",
+		"ROWABOVE": "Vložit řádek nad",
+		"ROWBELOW": "Vložit řádek pod",
+		"COLLEFT": "Vložit sloupec vlevo",
+		"COLRIGHT": "Vložit sloupec vpravo",
+		"ROWDELETE": "Smazat řádek",
+		"COLDELETE": "Smazat sloupec",
+		"TABLEDELETE": "Smazat tabulku"
 	},
 	"SETTINGS_LABELS": {
 		"GENERAL": "Všeobecné",
@@ -515,7 +571,14 @@
 		"IMAGES_WHITELIST": "Seznam povolených obrázků",
 		"MESSAGE_POPUP_WINDOW": "Otevřít zprávu v novém okně místo záložky",
 		"MAILTO": "Registrovat jako výchozí program pro 'mailto:' odkazy",
-		"HTML_TO_MD": "Převést HTML na Markdown místo prostého textu"
+		"HTML_TO_MD": "Převést HTML na Markdown místo prostého textu",
+		"DATE_FORMAT": "Formát datumu",
+		"DATE_FORMAT_HINT": "První položka se řídí jazykem rozhraní.",
+		"PREVIEW_LINES": "Náhled zprávy",
+		"PREVIEW_LINES_NONE": "Žádný náhled",
+		"PREVIEW_LINES_ONE": "Jeden řádek",
+		"PREVIEW_LINES_TWO": "Dva řádky",
+		"PREVIEW_LINES_UNSUPPORTED": "Váš poštovní server nepodporuje vytváření náhledů, toto nastavení proto nebude mít žádný účinek."
 	},
 	"SETTINGS_CONTACTS": {
 		"LABEL_CONTACTS_AUTOSAVE": "Automaticky přidávat adresy příjemců do Adresáře",
@@ -653,5 +716,45 @@
 		"MailServerError": "Nastala chyba během přístupu na poštovní server",
 		"InvalidInputArgument": "Nevalidní vstupní argument",
 		"UnknownError": "Neznámá chyba"
+	},
+	"CALENDAR": {
+		"BUTTON_ADD_TO_CALENDAR": "Přidat do kalendáře",
+		"LABEL_CHOOSE_CALENDAR": "Který kalendář?",
+		"IMPORT_SUCCEEDED": "o kalendáře bylo přidáno událostí: %COUNT%.",
+		"ERROR_NO_WRITABLE_CALENDAR": "Nemáte přístup k žádnému kalendáři pro zápis.",
+		"ERROR_IMPORT_FAILED": "Událost nemůže být přidána.",
+		"BUTTON_NEW_EVENT": "Nová událost",
+		"BUTTON_PREV": "Předchozí",
+		"BUTTON_NEXT": "Další",
+		"BUTTON_TODAY": "Dnes",
+		"BUTTON_SYNC": "Synchronizovat kalendáře",
+		"SYNC_SKIPPED": "Synchronizace byla dokončena, ale některé položky se nepodařilo uložit (neuloženo: %COUNT%). Podrobnosti naleznete v protokolu.",
+		"VIEW_MONTH": "Měsíc",
+		"VIEW_WEEK": "Týden",
+		"VIEW_DAY": "Den",
+		"VIEW_LIST": "List",
+		"EMPTY_LIST": "Žádné kalendáře",
+		"READ_ONLY": "Jen pro čtení",
+		"LABEL_CALENDAR": "Kalendář",
+		"LABEL_ALL_DAY": "Celý den",
+		"LABEL_START": "Začátek",
+		"LABEL_END": "Konec",
+		"LABEL_LOCATION": "Umístění",
+		"LABEL_DESCRIPTION": "Popis",
+		"CONFIRM_DELETE_EVENT": "Opravdu chcete smazat tuto událost?",
+		"ERROR_LOAD_COMPONENT": "Komponentu kalendáře se nepodařilo načíst",
+		"RECURRING_READ_ONLY": "Opakovaná událost. Úprava opakovaných událostí zatím není k dispozici – zobrazeno pouze pro čtení.",
+		"ERROR_NO_TITLE": "Zadejte název události",
+		"ERROR_BAD_START": "Datum a čas začátku nejsou platné",
+		"ERROR_BAD_END": "Datum a čas konce nejsou platné",
+		"ERROR_END_BEFORE_START": "Událost končí dříve, než začíná",
+		"ERROR_NO_CALENDAR": "Vyberte kalendář pro událost"
+	},
+	"SETTINGS_CALENDAR": {
+		"LABEL_FIRST_DAY": "První den týdne",
+		"LABEL_WEEK_NUMBERS": "Zobrazit čísla týdnů",
+		"DAY_MONDAY": "Pondělí",
+		"DAY_SUNDAY": "Neděle",
+		"DAY_SATURDAY": "Sobota"
 	}
 }
