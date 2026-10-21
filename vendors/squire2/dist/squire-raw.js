@@ -3136,8 +3136,24 @@
       }
       if (!block || lineBreakOnly || /^T[HD]$/.test(block.nodeName)) {
         moveRangeBoundaryOutOf(range, "A", root);
-        insertNodeInRange(range, createElement("BR"));
+        const br = createElement("BR");
+        insertNodeInRange(range, br);
         range.collapse(false);
+        /**
+         * With nothing after it in the line this BR renders as no break at all,
+         * and Firefox drops it on the next keystroke, so shift+enter at the end
+         * of a paragraph did nothing. A second BR gives the new line something
+         * to be, the way fixCursor() does for an empty block, and the caret
+         * goes between the two. A trailing BR is not rendered by anything, so
+         * the filler costs the sent message no blank line. isLineBreak() is
+         * Squire's own test for whether a BR has anything after it in its line.
+         */
+        if (!isLineBreak(br)) {
+          const filler = createElement("BR");
+          br.after(filler);
+          range.setStartBefore(filler);
+          range.collapse(true);
+        }
         this.setSelection(range);
         this._updatePath(range, true);
         return this;
