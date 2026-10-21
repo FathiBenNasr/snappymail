@@ -1,8 +1,11 @@
-## 4.4.7 - 2026-10-20
+## 4.4.7 - 2026-10-21
 
 The last three of the back-button regressions, two of which only show on a large mailbox or on a phone. Plus the end of the admin password error on Docker upgrades, calendars that could never be removed, and a way to log logins on their own.
 
-Worth taking if your inbox holds more than 10,000 messages, because no conversation could be opened in one at all.
+Worth taking if you run the Docker image, because it is rebuilt on PHP 8.2.35 and the 4.4.6 one is not, or if your inbox holds more than 10,000 messages, because no conversation could be opened in one at all.
+
+### Security
+- **The Docker image is rebuilt on PHP 8.2.35. Upgrade it.** The 4.4.6 image shipped 8.2.34, which carries CVE-2026-109618 and CVE-2026-109619, both rated critical and both ending in remote code execution: the first because an out-of-memory error exits through `longjmp()` and leaves request memory in a state shutdown then reads, the second because global state a worker keeps between requests is read after the memory it points at has been freed. Neither is anything Tachyon does, and nothing in the application can guard against them. No Tachyon code changed for this release of the image; it is built on the current `php:8.2-fpm-alpine`, which is now 8.2.35 on both amd64 and arm64. If you installed from the tarball or the Debian package instead, this release does nothing for you and you want your distribution's PHP 8.2.35, 8.3.36, 8.4.27 or 8.5.12. Reported by @limolitz (#166)
 
 ### Fixed
 - **No thread could be opened in a folder holding more than `message_list_limit` messages**, 10,000 by default, which showed as the full folder under a "Back to message list" button. That branch answers with the most recent slice rather than working out the whole uid list, and says in its own comment that it does not use THREAD; a request naming one thread fell into it and got the unthreaded folder back, with the thread uid still echoed in the response. It could not escape either, because the one thing that lifts the limit is a cached uid lookup that is itself skipped whenever a thread is named. A mailbox growing past 10,000 messages was enough to turn this on, which is why it had worked for years and why the IMAP server was never at fault. Reported by @floppybl (#156)
