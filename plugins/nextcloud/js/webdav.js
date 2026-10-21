@@ -122,7 +122,25 @@ const
 		});
 	},
 
-	buildTree = (view, parent, items, path) => {
+	// A plus on the row it creates into, so where a new folder will appear is not
+	// in question. The pair of fields at the end of every open level could not say
+	// that, and closed the dialog the moment it was used (#117).
+	createButton = (view, path) => {
+		let btn = document.createElement('button');
+		btn.type = 'button';
+		btn.className = 'button-vue';
+		btn.textContent = '+';
+		btn.title = rl.i18n('NEXTCLOUD/CREATE_SUBFOLDER');
+		btn.addEventListener('click', event => {
+			// The row this sits on is a summary, which would otherwise fold shut
+			event.stopPropagation();
+			event.preventDefault();
+			view.createFolderIn(path, btn);
+		});
+		return btn;
+	},
+
+	buildTree = (view, parent, items) => {
 		if (items.length) {
 			try {
 				// https://github.com/the-djmaze/snappymail/issues/1109
@@ -137,14 +155,17 @@ const
 						details = document.createElement('details'),
 						summary = document.createElement('summary'),
 						ul = document.createElement('ul');
-					details.addEventListener('toggle', () => {
-						// Kept on the element so revealFolder() can wait for a level
-						// before looking inside it.
-						details.loaded = details.loaded
-							|| (ul.children.length
-								? Promise.resolve()
-								: fetchFiles(item.name).then(items => buildTree(view, ul, items, item.name)));
-					});
+					// Kept on the element so revealFolder() can load a level before
+					// looking inside it. It has to be callable, not just awaitable:
+					// the toggle event does not fire until after details.open is set,
+					// so revealFolder() reached an empty list and stopped, which left
+					// a remembered subfolder unticked while a top level one worked
+					// (#117).
+					details.load = () => details.loaded = details.loaded
+						|| (ul.children.length
+							? Promise.resolve()
+							: fetchFiles(item.name).then(items => buildTree(view, ul, items)));
+					details.addEventListener('toggle', () => details.load());
 					summary.dataset.icon = 'folder';
 					if (view.files()) {
 						summary.textContent = item.name.replace(/^.*\/([^/]+)$/, '$1');
@@ -162,6 +183,7 @@ const
 						name.textContent = item.name.replace(/^.*\/([^/]+)$/, '$1');
 						summary.append(radio);
 						summary.append(name);
+						summary.append(createButton(view, item.name));
 					}
 					details.append(summary);
 					details.append(ul);
@@ -191,19 +213,6 @@ const
 					}
 				});
 			}
-		}
-		if (!view.files()) {
-			let li = document.createElement('li'),
-				input = document.createElement('input'),
-				btn = document.createElement('button');
-			btn.name = 'create';
-			btn.textContent = 'create & select';
-			btn.className = 'button-vue';
-			btn.input = input;
-			li.item_path = path;
-			li.append(input);
-			li.append(btn);
-			parent.append(li);
 		}
 	};
 
@@ -291,24 +300,85 @@ class NextcloudFilesPopupView extends rl.pluginPopupView {
 		this.tree.addEventListener('change', event => {
 			event.target.matches('input[type="radio"]') && this.folder(event.target.item_name);
 		});
-		this.tree.addEventListener('click', event => {
-			let el = event.target;
-			if (el.matches('button')) {
-				let parent = el.parentNode;
-				if ('create' == el.name) {
-					let name = el.input.value.replace(/[|\\?*<":>+[]\/&\s]/g, '');
-					if (name.length) {
-						name = parent.item_path + '/' + name;
-						createDirectory(name).then(response => {
-							if (response.status == 201) {
-								this.select = name;
-								this.close();
-							}
-						});
-					}
+	}
+
+	/**
+	 * Asks for a name for a new folder inside sPath, in a row where the folder
+	 * itself will appear, so it is clear which level is being added to. Creating
+	 * one leaves the dialog open with the new folder ticked, rather than closing
+	 * on the spot the way the old create button did (#117).
+	 */
+	createFolderIn(sPath, oButton) {
+		const bRoot = '/' === sPath,
+			oDetails = bRoot ? null : oButton.closest('details'),
+			oList = bRoot ? this.tree : oDetails?.querySelector(':scope > ul');
+		if (!oList) {
+			return;
+		}
+		if (oDetails) {
+			// Opening it loads the level, so the new folder arrives in a list that
+			// already shows what is there
+			oDetails.open = true;
+			oDetails.load?.();
+		}
+
+		let oRow = oList.querySelector(':scope > li.nc-create');
+		if (oRow) {
+			oRow.querySelector('input').focus();
+			return;
+		}
+
+		oRow = document.createElement('li');
+		oRow.className = 'nc-create';
+		const oInput = document.createElement('input'),
+			oCreate = document.createElement('button'),
+			oCancel = document.createElement('button'),
+			fCreate = () => {
+				// Whatever reaches this becomes part of a DAV url
+				const sName = oInput.value.replace(/[|\\?*<":>+\[\]\/&]/g, '').replace(/^\.+/, '').trim();
+				if (!sName.length) {
+					oInput.focus();
+					return;
 				}
+				const sFull = (bRoot ? '' : sPath) + '/' + sName;
+				oCreate.disabled = true;
+				// Wait for the level's own listing: one still in flight would arrive
+				// afterwards and add a second row for the same folder
+				Promise.resolve(oDetails?.loaded).then(() => createDirectory(sFull)).then(response => {
+					oRow.remove();
+					if (201 === response.status) {
+						buildTree(this, oList, [{name: sFull, isFile: false}]);
+						const oRadio = [...oList.querySelectorAll(':scope > li > details > summary > input[type="radio"]')]
+							.find(oInp => oInp.item_name === sFull);
+						if (oRadio) {
+							oRadio.checked = true;
+							this.folder(sFull);
+							oRadio.scrollIntoView({block: 'nearest'});
+						}
+					}
+				}).catch(() => oRow.remove());
+			};
+
+		oInput.placeholder = rl.i18n('NEXTCLOUD/FOLDER_NAME');
+		oInput.addEventListener('keydown', event => {
+			if ('Enter' === event.key) {
+				event.preventDefault();
+				fCreate();
+			} else if ('Escape' === event.key) {
+				oRow.remove();
 			}
 		});
+		oCreate.type = 'button';
+		oCreate.className = 'button-vue';
+		oCreate.textContent = rl.i18n('NEXTCLOUD/FOLDER_CREATE');
+		oCreate.addEventListener('click', fCreate);
+		oCancel.type = 'button';
+		oCancel.className = 'button-vue';
+		oCancel.textContent = rl.i18n('GLOBAL/CANCEL');
+		oCancel.addEventListener('click', () => oRow.remove());
+		oRow.append(oInput, oCreate, oCancel);
+		oList.prepend(oRow);
+		oInput.focus();
 	}
 
 	/** Folder mode: take the folder the radio chose. */
@@ -351,7 +421,7 @@ class NextcloudFilesPopupView extends rl.pluginPopupView {
 			}
 			const oDetails = oRadio.closest('details');
 			oDetails.open = true;
-			await oDetails.loaded;
+			await oDetails.load();
 			oScope = oDetails.querySelector('ul');
 			if (!oScope) {
 				return;
@@ -368,7 +438,14 @@ class NextcloudFilesPopupView extends rl.pluginPopupView {
 
 		this.tree.innerHTML = '';
 		fetchFiles('/').then(items => {
-			buildTree(this, this.tree, items, '/');
+			buildTree(this, this.tree, items);
+			if (!this.files()) {
+				// Without one at the top there is no way to make a folder at the root
+				const oRootRow = document.createElement('li');
+				oRootRow.className = 'nc-create-root';
+				oRootRow.append(createButton(this, '/'));
+				this.tree.prepend(oRootRow);
+			}
 			if (!this.files()) {
 				let sLast = '';
 				try {

@@ -14,7 +14,8 @@
 			if (attachmentsControls) {
 				attachmentsControls.append(Element.fromHTML(`<span>
 					<i class="icon-x iconcolor-red" data-bind="visible: saveNextcloudError"></i>
-					<i class="icon-save" data-bind="visible: !saveNextcloudError(),
+					<i class="icon-check iconcolor-green" data-bind="visible: saveNextcloudSuccess"></i>
+					<i class="icon-save" data-bind="visible: !saveNextcloudError() && !saveNextcloudSuccess(),
 						css: {'icon-spinner': saveNextcloudLoading()}"></i>
 					<span class="g-ui-link" data-bind="click: saveNextcloud" data-i18n="NEXTCLOUD/SAVE_ATTACHMENTS"></span>
 				</span>`));
@@ -51,6 +52,10 @@
 
 			let view = e.detail;
 			view.saveNextcloudError = ko.observable(false).extend({ falseTimeout: 7000 });
+			// A save that worked said nothing at all, so there was no way to tell it
+			// from one that had not happened yet (#117). The icon turns into a green
+			// check and goes back to the save icon by itself.
+			view.saveNextcloudSuccess = ko.observable(false).extend({ falseTimeout: 5000 });
 			view.saveNextcloudLoading = ko.observable(false);
 			view.saveNextcloud = () => {
 				const
@@ -58,6 +63,7 @@
 					.map(item => item?.checked() /*&& !item?.isLinked()*/ ? item.download : '')
 					.filter(v => v);
 				if (hashes.length) {
+					view.saveNextcloudSuccess(false);
 					view.saveNextcloudLoading(true);
 					rl.nextcloud.selectFolder().then(folder => {
 						if (folder) {
@@ -70,7 +76,7 @@
 							.then(result => {
 								view.saveNextcloudLoading(false);
 								if (result?.Result) {
-									// success
+									view.saveNextcloudSuccess(true);
 								} else {
 									view.saveNextcloudError(true);
 								}
