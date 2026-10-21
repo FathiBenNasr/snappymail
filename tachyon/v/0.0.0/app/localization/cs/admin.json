@@ -31,7 +31,8 @@
 		"PACKAGES": "Balíčky",
 		"CONFIG": "Config",
 		"ABOUT": "Info",
-		"CALENDAR": "Kalendář"
+		"CALENDAR": "Kalendář",
+		"LOGGING": "Logování"
 	},
 	"TAB_GENERAL": {
 		"LEGEND_INTERFACE": "Rozhraní",
@@ -196,15 +197,16 @@
 		"BUTTON_WHITE_LIST": "White List",
 		"NEW_DOMAIN_DESC": "Konfigurace této domény umožní používat <strong>%NAME%</strong> adresy.",
 		"WHITE_LIST_ALERT": "Seznam domén s povoleným uživatelským přístupem\nPoužijte mezeru pro jejich oddělení.\n",
-		"VALID_SPAM_HEADERS": "Valid SPAM headers",
-		"VALID_VIRUS_HEADERS": "Valid virus headers"
+		"VALID_SPAM_HEADERS": "Platné spamové hlavičky",
+		"VALID_VIRUS_HEADERS": "Platné virové hlavičky",
+		"HINT_PHP_MAIL": "K odeslání zpráv použije lokální funkci mail() místo SMTP serveru. Funkce závislé na protokolu SMTP (včetně doručenek) nebudou dostupné."
 	},
 	"POPUPS_PLUGIN": {
 		"TITLE_PLUGIN": "Plugin",
 		"DESC_NOTHING_TO_CONFIGURE": "Není zde nic ke konfiguraci"
 	},
 	"POPUPS_ASK": {
-		"DESC_WANT_CLOSE_THIS_WINDOW": "Jste si jistí, že opravdu chcete zavřít toto okno?"
+		"DESC_WANT_CLOSE_THIS_WINDOW": "Opravdu chcete zavřít toto okno?"
 	},
 	"POPUPS_LANGUAGES": {
 		"TITLE_LANGUAGES": "Vyberte váš jazyk"
@@ -230,5 +232,14 @@
 		"InvalidPluginPackage": "Nevalidní balíček",
 		"UnsupportedPluginPackage": "Nepodporovaný balíček rozšíření",
 		"UnknownError": "Neznámá chyba"
+	},
+	"TAB_LOGS": {
+		"HINT_AUTH_LOGGING": "Určeno pro fail2ban a podobné nástroje.",
+		"LABEL_AUTH_FORMAT": "Formát",
+		"HINT_DEBUG": "Pouze pro účely vývoje. Ladicí protokolování (debug logging) je velmi podrobné a zaznamenává podstatně více dat, než vyžaduje běžný denní provoz.",
+		"LABEL_DEBUG_ENABLE": "Zapnout ladící (debug) mód",
+		"LABEL_DEBUG_JS": "Používat neminifikovaný JavaScript",
+		"LABEL_DEBUG_CSS": "Používat neminifikovaný CSS",
+		"LABEL_ENABLE": "Zapnout logování"
 	}
 }
