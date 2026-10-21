@@ -1038,12 +1038,25 @@
       let offset = range.endOffset;
       cleanupBRs(block);
       if (isInline(container)) {
-        const nodeAfterSplit = split(
+        let nodeAfterSplit = split(
           container,
           offset,
           getPreviousBlock(container, root) || root,
           root
         );
+        /**
+         * Splitting at the end of a link leaves the clone of it with nothing in
+         * it, and this path never cleaned that up: inserting anything beside a
+         * link left an empty one behind, which then travelled in the sent
+         * message. splitBlock() meets the same case and swaps the empty link
+         * for an empty text node, which keeps the position this needs.
+         */
+        if (nodeAfterSplit && "A" === nodeAfterSplit.nodeName
+         && (!nodeAfterSplit.textContent || ZWS === nodeAfterSplit.textContent)) {
+          const text = document.createTextNode("");
+          replaceWith(nodeAfterSplit, text);
+          nodeAfterSplit = text;
+        }
         container = nodeAfterSplit.parentNode;
         offset = Array.from(container.childNodes).indexOf(
           nodeAfterSplit
