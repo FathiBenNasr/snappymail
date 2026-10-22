@@ -10,7 +10,8 @@
 		"CANCEL": "Abbrechen",
 		"SEARCH": "Suchen",
 		"YES": "Ja",
-		"NO": "Nein"
+		"NO": "Nein",
+		"SHOW_PASSWORD": "Passwort anzeigen"
 	},
 	"LOGIN": {
 		"LABEL_LOGIN": "Benutzer",
@@ -48,7 +49,11 @@
 		"LABEL_ALLOW_IDENTITIES": "Mehrere Identitäten erlauben",
 		"ALERT_DATA_ACCESS": "Auf den \"Data\"-Ordner kann zugegriffen werden. Konfigurieren Sie den Ordner so, dass er extern nicht erreichbar ist. Weitere Informationen:",
 		"ALERT_WARNING": "Warnung!",
-		"HTML_ALERT_WEAK_PASSWORD": "Sie verwenden das Standard-Admin-Passwort.\n<br>\nBitte <strong><a href=\"#/security\">ändern</a></strong> Sie\n das Passwort aus Sicherheitsgründen!"
+		"HTML_ALERT_WEAK_PASSWORD": "Sie verwenden das Standard-Admin-Passwort.\n<br>\nBitte <strong><a href=\"#/security\">ändern</a></strong> Sie\n das Passwort aus Sicherheitsgründen.\n",
+		"LABEL_MESSAGES_PER_PAGE": "Nachrichten pro Seite",
+		"HINT_MESSAGES_PER_PAGE": "Standardeinstellung für einen Benutzer, der keine eigene Auswahl getroffen hat.",
+		"LABEL_MESSAGES_PER_PAGE_MAX": "Begrenzung der Nachrichten pro Seite",
+		"HINT_MESSAGES_PER_PAGE_MAX": "Vom Benutzer maximal wählbarer Wert. Ein höherer Standardwert wird entsprechend begrenzt."
 	},
 	"TAB_LOGIN": {
 		"LEGEND_LOGIN_SCREEN": "Anmeldebildschirm",
@@ -100,16 +105,17 @@
 		"ALERT_NOTICE": "Hinweis!",
 		"SUGGESTIONS_LIMIT": "Limit für Empfehlungen",
 		"HTML_ALERT_DO_NOT_USE_THIS_DATABASE": "Verwenden Sie diesen Datenbanktyp nicht bei einer hohen Anzahl aktiver Benutzer.",
-		"HTML_ALERT_DOES_NOT_SUPPORTED": "Ihr System unterstützt keine Kontakte.\n<br>\nSie müssen die <strong>PDO-Erweiterung (SQLite / MySQL / PostgreSQL)</strong> auf Ihrem Server installieren oder aktivieren.",
+		"HTML_ALERT_DOES_NOT_SUPPORTED": "Ihr System unterstützt keine Kontakte.\n<br>\nSie müssen die <strong>PDO-Erweiterung (SQLite / MySQL / PostgreSQL)</strong> auf Ihrem Server installieren oder aktivieren.\n",
 		"COMPOSE_LIMIT": "Maximale Empfängerzahl aus einer Auswahl",
-		"BCC_LIMIT": "Ab dieser Empfängerzahl Bcc empfehlen"
+		"BCC_LIMIT": "Ab dieser Empfängerzahl Bcc empfehlen",
+		"TEST_OK_BUT_DISABLED": "Die Datenbank hat geantwortet, aber Kontakte sind abgeschaltet, daher erreicht dies Ihre Benutzer nicht. Nutzen Sie \"Kontakte aktivieren\" oben."
 	},
 	"TAB_DOMAINS": {
 		"LEGEND_DOMAINS": "Domains",
 		"BUTTON_ADD_DOMAIN": "Domain hinzufügen",
 		"BUTTON_ADD_ALIAS": "Alias hinzufügen",
 		"DELETE_ARE_YOU_SURE": "Sind Sie sicher?",
-		"HTML_DOMAINS_HELPER": "Liste der Domains, die Webmail-Nutzer verwenden dürfen.\n<br>\nKlicken Sie auf den Namen, um die Domain zu konfigurieren."
+		"HTML_DOMAINS_HELPER": "Liste der Domains, die Webmail-Nutzer verwenden dürfen.\n<br>\nKlicken Sie auf den Namen, um die Domain zu konfigurieren.\n"
 	},
 	"TAB_SECURITY": {
 		"LABEL_TOTP_CLEAR": "Entfernen",
@@ -126,7 +132,8 @@
 		"HINT_TOTP_CONFIRM": "Scannen Sie den Code oben mit Ihrer Authenticator-App und geben Sie die sechs angezeigten Ziffern ein. Ohne dies wird die Zwei-Faktor-Authentifizierung nicht aktiviert.",
 		"LABEL_REQUIRE_VERIFICATION": "Signiertes SSL-Zertifikat erfordern",
 		"CRYPTO": "Kryptographie",
-		"LABEL_ALLOW_SELF_SIGNED": "Selbst-signiertes Zertifikat akzeptieren"
+		"LABEL_ALLOW_SELF_SIGNED": "Selbst-signiertes Zertifikat akzeptieren",
+		"LABEL_AUTO_DECRYPT": "Nachrichten automatisch entschlüsseln, wenn kein Passwort erforderlich ist"
 	},
 	"TAB_PACKAGES": {
 		"LABEL_ENABLE_PLUGINS": "Erweiterungen aktivieren",
@@ -146,7 +153,19 @@
 		"HTML_NEW_VERSION": "Neue Version <b>%VERSION%</b> verfügbar.",
 		"LABEL_UPDATING": "Aktualisiere",
 		"LABEL_CHECKING": "Überprüfe auf Aktualisierungen",
-		"BUTTON_RELEASES": "Veröffentlichungen"
+		"BUTTON_RELEASES": "Veröffentlichungen",
+		"LEGEND_CLEANUP": "Alte Versionen",
+		"HINT_CLEANUP": "Jedes Update wird neben der vorherigen Version installiert, die niemals entfernt wird. Die aktuell laufende Version kann nicht ausgewählt werden. Auch Verzeichnisse einer früheren RainLoop- oder SnappyMail-Installation werden aufgelistet.",
+		"LABEL_CLEANUP_PRODUCT": "Anwendung",
+		"LABEL_CLEANUP_VERSION": "Version",
+		"LABEL_CLEANUP_SIZE": "Größe",
+		"LABEL_CLEANUP_RUNNING": "(läuft)",
+		"BUTTON_CLEANUP": "Ausgewählte löschen und freigeben",
+		"CONFIRM_DELETE_VERSIONS": "%COUNT% alte Version(en) löschen? Dies kann nicht rückgängig gemacht werden.",
+		"ERROR_DELETE_VERSIONS": "Die ausgewählten Versionen konnten nicht gelöscht werden.",
+		"LABEL_CLEANUP_SCANNING": "Suche installierte Versionen",
+		"LABEL_CLEANUP_DELETING": "Lösche %CURRENT% von %COUNT%",
+		"LABEL_CLEANUP_LOCKED": "(vom Webserver nicht beschreibbar)"
 	},
 	"POPUPS_DOMAIN_ALIAS": {
 		"TITLE_ADD_DOMAIN_ALIAS": "Alias hinzufügen",
@@ -177,9 +196,10 @@
 		"LABEL_USE_PHP_MAIL": "PHPs mail()-Funktion verwenden",
 		"BUTTON_WHITE_LIST": "Whitelist",
 		"NEW_DOMAIN_DESC": "Diese Domain-Konfiguration erlaubt die Verwendung von <strong>%NAME%</strong> Mail-Adressen.",
-		"WHITE_LIST_ALERT": "Liste der Domain-User, die Webmail verwenden dürfen.\nVerwenden Sie Leerzeichen als Trennsymbol.",
+		"WHITE_LIST_ALERT": "Liste der Domain-User, die Webmail verwenden dürfen.\nVerwenden Sie Leerzeichen als Trennsymbol.\n",
 		"VALID_SPAM_HEADERS": "Spam-Header beachten",
-		"VALID_VIRUS_HEADERS": "Virus-Header beachten"
+		"VALID_VIRUS_HEADERS": "Virus-Header beachten",
+		"HINT_PHP_MAIL": "Übergibt die Nachricht an die lokale mail()-Funktion, anstatt mit einem SMTP-Server zu kommunizieren. Funktionen, die SMTP benötigen, stehen nicht zur Verfügung, einschließlich Zustellungsbestätigungen."
 	},
 	"POPUPS_PLUGIN": {
 		"TITLE_PLUGIN": "Erweiterung",
@@ -189,7 +209,7 @@
 		"DESC_WANT_CLOSE_THIS_WINDOW": "Sind Sie sicher, dass Sie dieses Fenster schließen möchten?"
 	},
 	"POPUPS_LANGUAGES": {
-		"TITLE_LANGUAGES": "Wählen Sie Ihre Sprache"
+		"TITLE_LANGUAGES": "Sprache auswählen"
 	},
 	"HINTS": {
 		"BETA": "Beta",
@@ -202,7 +222,7 @@
 	"NOTIFICATIONS": {
 		"RequestError": "Anfrage fehlgeschlagen",
 		"RequestAborted": "Anfrage abgebrochen",
-		"RequestTimeout": "Zeitüberschreitung bei der Anfrage",
+		"RequestTimeout": "Zeitüberschreitung der Anfrage",
 		"InvalidToken": "Ungültiger Token",
 		"AuthError": "Authentifizierung fehlgeschlagen",
 		"DomainAlreadyExists": "Diese Domain existiert bereits",
