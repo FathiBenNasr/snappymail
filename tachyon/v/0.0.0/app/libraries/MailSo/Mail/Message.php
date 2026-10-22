@@ -296,9 +296,18 @@ class Message implements \JsonSerializable
 			$oMessage->DMARC = $aAuth['dmarc'];
 			if ($aAuth['dkim'] && $oMessage->oFrom) {
 				foreach ($oMessage->oFrom as $oEmail) {
-					$sEmail = $oEmail->GetEmail();
+					$sDomain = \strtolower($oEmail->GetDomain());
 					foreach ($aAuth['dkim'] as $aDkimData) {
-						if (\strpos($sEmail, $aDkimData[1])) {
+						// header.d=domain.tld, header.i=@domain.tld or header.i=user@domain.tld
+						$sSigner = \strtolower($aDkimData[1]);
+						$iAt = \strrpos($sSigner, '@');
+						if (false !== $iAt) {
+							$sSigner = \substr($sSigner, $iAt + 1);
+						}
+						// strpos() was false for a signer at offset 0 and truthy for any
+						// substring, so example.org also passed for evil-example.org.
+						if (\strlen($sSigner)
+						 && ($sDomain === $sSigner || \str_ends_with($sDomain, '.' . $sSigner))) {
 							$oEmail->SetDkimStatus($aDkimData[0]);
 						}
 					}
