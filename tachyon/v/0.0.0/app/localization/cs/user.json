@@ -587,7 +587,9 @@
 		"LABEL_CONTACTS_SYNC_SERVER": "Server",
 		"LABEL_CONTACTS_SYNC_AB_URL": "URL adresáře",
 		"LABEL_CONTACTS_SYNC_USER": "Uživatel",
-		"SYNC_READ": "Pouze pro čtení"
+		"SYNC_READ": "Pouze pro čtení",
+		"LABEL_CONTACTS_HIDE_NO_EMAIL": "Skrýt kontakty bez e-mailové adresy",
+		"TEST_OK": "Připojení bylo úspěšné"
 	},
 	"SETTINGS_THEMES": {
 		"LEGEND_THEMES": "Motivy",
@@ -638,7 +640,12 @@
 		"IMPORT_FROM_SERVER": "Importovat ze serveru",
 		"TITLE_PRIVATE": "Soukromý",
 		"TITLE_PUBLIC": "Veřejný",
-		"GET_MAILVELOPE": "Získat rozšíření Mailvelope pro prohlížeč"
+		"GET_MAILVELOPE": "Získat rozšíření Mailvelope pro prohlížeč",
+		"RESTORE_FROM_ACCOUNT": "Obnovit klíče uložené v mém účtu",
+		"RESTORE_HINT": "Klíče jsou uloženy ve vašem prohlížeči, jiný prohlížeč nebo zařízení je proto zpočátku bez klíčů. Tato akce stáhne zpět klíče, které jste se rozhodli uložit ke svému účtu na tomto serveru. Veřejné servery s klíči se neprohledávají.",
+		"IMPORT_NONE_FOUND": "Na serveru nejsou uloženy žádné klíče OpenPGP.",
+		"IMPORT_ADDED": "%COUNT% klíč(ů) nahráno.",
+		"IMPORT_ALL_KNOWN": "Všechny nalezené klíče ze serveru (počet: %COUNT%) již máte v klíčence."
 	},
 	"SHORTCUTS_HELP": {
 		"LEGEND_SHORTCUTS_HELP": "Klávesové zkratky",
@@ -715,7 +722,8 @@
 		"AccountSwitchFailed": "Přepnutí na účet \"%EMAIL%\" selhalo",
 		"MailServerError": "Nastala chyba během přístupu na poštovní server",
 		"InvalidInputArgument": "Nevalidní vstupní argument",
-		"UnknownError": "Neznámá chyba"
+		"UnknownError": "Neznámá chyba",
+		"CalendarSyncError": "Synchronizace kalendáře selhala"
 	},
 	"CALENDAR": {
 		"BUTTON_ADD_TO_CALENDAR": "Přidat do kalendáře",
@@ -755,6 +763,12 @@
 		"LABEL_WEEK_NUMBERS": "Zobrazit čísla týdnů",
 		"DAY_MONDAY": "Pondělí",
 		"DAY_SUNDAY": "Neděle",
-		"DAY_SATURDAY": "Sobota"
+		"DAY_SATURDAY": "Sobota",
+		"LEGEND_CALENDAR_SYNC": "Vzdálená synchronizace (CalDAV)",
+		"LABEL_CALENDAR_SYNC_ENABLE": "Povolit vzdálenou synchronizaci",
+		"LABEL_CALENDAR_SYNC_URL": "CalDAV URL",
+		"LABEL_CALENDAR_SYNC_USER": "Uživatel",
+		"SYNC_READ": "Pouze pro čtení",
+		"TEST_OK": "Připojení bylo úspěšné"
 	}
 }
