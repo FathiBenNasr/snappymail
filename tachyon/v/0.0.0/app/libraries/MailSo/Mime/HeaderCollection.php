@@ -198,11 +198,16 @@ class HeaderCollection extends \MailSo\Base\Collection
 			foreach ($aHeaders as $sLine) {
 				$aStatus = array();
 				$aHeader = array();
-				if (\preg_match("/(dkim|dmarc|spf)=([a-z0-9]+).*?(;|$)/Di", $sLine, $aStatus)
-				 && \preg_match('/(?:header\\.(?:d|i|from)|smtp.mailfrom)="?([^\\s;"]+)/i', $sLine, $aHeader)
-				) {
+				if (\preg_match("/(dkim|dmarc|spf)=([a-z0-9]+).*?(;|$)/Di", $sLine, $aStatus)) {
 					$sType = \strtolower($aStatus[1]);
-					$aResult[$sType][] = array(\strtolower($aStatus[2]), $aHeader[1], \trim($sLine));
+					\preg_match('/(?:header\\.(?:d|i|from)|smtp.mailfrom)="?([^\\s;"]+)/i', $sLine, $aHeader);
+					// A dkim result is matched against the From address, so one without
+					// an identity says nothing. spf and dmarc are only displayed, and
+					// RFC 8601 allows a result with no property, so demanding an
+					// identity there reported a bare "spf=pass" as none.
+					if ('dkim' !== $sType || isset($aHeader[1])) {
+						$aResult[$sType][] = array(\strtolower($aStatus[2]), $aHeader[1] ?? '', \trim($sLine));
+					}
 				}
 			}
 		}
