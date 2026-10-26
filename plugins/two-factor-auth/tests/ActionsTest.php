@@ -31,6 +31,11 @@ namespace RainLoop { class Notifications { const InvalidToken = 101; const AuthE
 		}
 		public function state() { return $this->oMainAuthAccount; }
 		public function HasActionParam($k) { return false; }
+		// 2.31.0: the core's resolution of a typed address (default domain), reached by Closure::bind.
+		protected function resolveLoginCredentials(string $sEmail, $oPassword) : array {
+			if ('boom' === $sEmail) { throw new \RuntimeException('resolution'); }
+			return array('email' => \str_contains($sEmail, '@') ? $sEmail : $sEmail . '@smail.tn');
+		}
 		public function SetAdditionalAuthToken($a) { $this->p && ++$this->p->additionalCleared; }
 	}
 	class ActionsAdmin extends Actions {}
@@ -131,7 +136,9 @@ namespace {
 			public function __construct(private $p) {} public function Actions() { return $this->p->actions; } }; }
 	}
 }
-namespace MailSo\Base { class Http { public static function StatusHeader(int $i) : void {} } }
+namespace MailSo\Base { class Http { public static function StatusHeader(int $i) : void {} }
+	class Utils { public static function Trim(string $s) : string { return \trim($s); } } }
+namespace SnappyMail { class SensitiveString { public function __construct(private string $s) {} } }
 namespace MailSo\Log { class Logger { public function __construct(private $p) {} public function Write($m) { $this->p->log[] = $m; } } }
 namespace RainLoop\Providers { class Storage { public function __construct(private $s) {}
 	public function Get($a, $t, $k) { return $this->s->Get($a, $t, $k); }
@@ -728,13 +735,80 @@ namespace {
 	$kb->config = $WA;
 	$kK = new SoftAuthenticator(-7);
 	$aK = $inscrire($kb, $kK);
-	$check('a key account, no code: the password first, then the key is asked for (2.28.0 order)', $login($kb, array()), 'directory+refused:TwoFactorCodeRequired');
-	$check('… a junk assertion passes this check, and login.success refuses it', $login($kb, array('webauthn_assertion' => '{}')), 'directory+refused:');
+	// 2.31.0: no longer the exception — no factor, no directory.
+	$check('a key account, no code: refused before the directory too (2.31.0)', $login($kb, array()), $AUTH);
+	$check('… a junk assertion no longer carries the password past the check', $login($kb, array('webauthn_assertion' => '{}')), $AUTH);
 	$deverrouiller($kb);
 	$check('… but a code typed on a key account is judged before the password', $login($kb, array('totp_code' => '000000')), $AUTH);
 	$check('… and its backup code passes', $login($kb, array('totp_code' => \explode(' ', $aK['BackupCodes'])[0])), 'directory+ok');
+
+	/* ---- 2.31.0: the key's challenge before any password ---- */
+	$opts = function (P $x, string $sEmail) {
+		$x->fresh(); $x->request(null); $x->params = array('Email' => $sEmail);
+		return $x->DoWebAuthnLoginOptions()['Result'];
+	};
+	$aRawKeys = TwoFactorRecord::passkeys($kb->raw(), TwoFactorRecord::key(APP_SALT));
+	$oK = $opts($kb, 'rym');
+	$check('login options for a typed address, resolved as the core does (default domain)', array(\is_array($oK), \array_column($oK['allowCredentials'] ?? array(), 'id')), array(true, \array_column($aRawKeys, 'Id')));
+	$check('… a stateless challenge of 48 characters', \strlen($oK['challenge']), 48);
+	$aRawBefore = $kb->raw();
+	for ($i = 0; $i < 30; ++$i) { $opts($kb, 'rym@smail.tn'); }
+	$check('… thirty requests for it write nothing: no flood can push the owner\'s challenges out', $kb->raw(), $aRawBefore);
+	$oD1 = $opts($kb, 'nour@smail.tn'); $oD2 = $opts($kb, 'nour@smail.tn');
+	$check('an address without a key gets options of the same shape', \array_keys($oD1), \array_keys($oK));
+	$check('… with decoy ids, the same at each request, as a real account\'s are', array(\array_column($oD1['allowCredentials'], 'id') === \array_column($oD2['allowCredentials'], 'id'), \in_array(\count($oD1['allowCredentials']), array(1, 2), true)), array(true, true));
+	$check('… of a security key\'s length (64 bytes)', \strlen(TwoFactorWebAuthn::unb64u($oD1['allowCredentials'][0]['id'])), 64);
+	$check('… and a fresh challenge each time', $oD1['challenge'] !== $oD2['challenge'], true);
+	$check('an address the core cannot resolve: no options', $opts($kb, 'boom'), false);
+
+	$signe = fn (SoftAuthenticator $k, array $o) => \json_encode($k->get($o['challenge']));
+	$sA = $signe($kK, $opts($kb, 'rym@smail.tn'));
+	$aBeforeKey = $kb->raw();
+	$check('the key before the password: the assertion is judged, then the password goes', $login($kb, array('webauthn_assertion' => $sA)), 'directory+ok');
+	$check('… judged once (login.success does not judge it again)', $dernier($kb, 'security key, login'), false);
+	$aAfterKey = $kb->raw();
+	$check('… the key\'s last use is stored, and its challenge marked spent', array(TwoFactorRecord::passkeys($aAfterKey, TwoFactorRecord::key(APP_SALT))[0]['LastUsed'] > 0, \count($aAfterKey['Spent'] ?? array())), array(true, 1));
+	$check('the same assertion again: refused before the directory', $login($kb, array('webauthn_assertion' => $sA)), $AUTH);
+	$check('… named in the plugin log', $dernier($kb, 'TFA: webauthn-challenge for rym@smail.tn, refused before the password'), true);
+	$sOther = $signe($kK, $opts($kb, 'nour@smail.tn'));
+	$check('a challenge asked for another address does not open this one', $login($kb, array('webauthn_assertion' => $sOther)), $AUTH);
+	$o3 = $opts($kb, 'rym@smail.tn'); $kb->binding = 'browser-2';
+	$check('a challenge asked by another browser does not either', $login($kb, array('webauthn_assertion' => $signe($kK, $o3))), $AUTH);
+	$kb->binding = 'browser-1';
+	$sExpired = TwoFactorAuthPlugin::loginChallenge('rym@smail.tn', 'browser-1', \time() - 1, TwoFactorRecord::key(APP_SALT));
+	$check('an expired challenge, though signed by the key: refused', $login($kb, array('webauthn_assertion' => \json_encode($kK->get($sExpired)))), $AUTH);
+	$sForged = TwoFactorAuthPlugin::loginChallenge('rym@smail.tn', 'browser-1', \time() + 300, TwoFactorRecord::key('another install'));
+	$check('a challenge made with another key (forged): refused', $login($kb, array('webauthn_assertion' => \json_encode($kK->get($sForged)))), $AUTH);
+	$check('a challenge that would last too long: refused', TwoFactorAuthPlugin::loginChallengeValid(TwoFactorAuthPlugin::loginChallenge('rym@smail.tn', 'b', \time() + 4000, 'k'), 'rym@smail.tn', 'b', \time(), 'k'), false);
+	$check('… and a well-formed one is valid (the check above is not always false)', TwoFactorAuthPlugin::loginChallengeValid(TwoFactorAuthPlugin::loginChallenge('rym@smail.tn', 'b', \time() + 60, 'k'), 'rym@smail.tn', 'b', \time(), 'k'), true);
+	$kOther = new SoftAuthenticator(-7);
+	$check('another key, never registered: refused', $login($kb, array('webauthn_assertion' => $signe($kOther, $opts($kb, 'rym@smail.tn')))), $AUTH);
+	$aNow = $kb->raw();
+	$check('… and none of these failures wrote anything', $aNow, $aAfterKey);
+	$kb->shortWait();
+	$sHeld = $signe($kK, $opts($kb, 'rym@smail.tn'));
+	$rH = \fopen($kb->lockFile(), 'c'); \flock($rH, LOCK_EX);
+	$check('a right assertion while the lock is held: refused ("busy" is not "ok")', $login($kb, array('webauthn_assertion' => $sHeld)), $AUTH);
+	\flock($rH, LOCK_UN); \fclose($rH);
+	$check('… and, the lock free, the same assertion then passes (it was not spent)', $login($kb, array('webauthn_assertion' => $sHeld)), 'directory+ok');
+	$aData = array('Auth' => false); $kb->FilterAppData(false, $aData);
+	$check('the login screen is told keys are on, before any login', $aData['TwoFactorKeyLogin'], true);
+	// A passkey without a counter (most of them): only the spent mark stops a replay.
+	$kz = new P();
+	$kz->config = $WA;
+	$kZ = new SoftAuthenticator(-7);
+	$inscrire($kz, $kZ);
+	$sZ = \json_encode($kZ->get($opts($kz, 'rym@smail.tn')['challenge'], array('counter' => 0)));
+	$check('a passkey without a counter logs in before the password', $login($kz, array('webauthn_assertion' => $sZ)), 'directory+ok');
+	$check('… and the same assertion replayed is refused: the challenge was marked spent', $login($kz, array('webauthn_assertion' => $sZ)), $AUTH);
+	\is_dir($kz->oStore->root) && \exec('rm -rf ' . \escapeshellarg($kz->oStore->root));
+
 	$kb->config = array();
+	$aData = array('Auth' => false); $kb->FilterAppData(false, $aData);
+	$check('keys switched off: the login screen is told', $aData['TwoFactorKeyLogin'], false);
+	$check('… no login options', $opts($kb, 'rym@smail.tn'), false);
 	$check('keys switched off by the administrator: a key account without a code no longer goes past', $login($kb, array()), $AUTH);
+	$check('… nor with an assertion', $login($kb, array('webauthn_assertion' => $sA)), $AUTH);
 
 	// The real wait: until the request has lasted precheck_delay seconds (and up to 0.5 s more).
 	$tw = new P();

@@ -33,6 +33,8 @@ final class TwoFactorRecord
 	public const BACKUP_DIGITS = 9;
 	/** Pending WebAuthn challenges kept per account; the oldest goes first. */
 	public const MAX_CHALLENGES = 8;
+	/** Login challenges already signed, kept until they expire (2.31.0). */
+	public const MAX_SPENT = 64;
 
 	/** A 32-byte key for this installation, derived from its salt. */
 	public static function key(string $sSalt) : string
@@ -222,6 +224,28 @@ final class TwoFactorRecord
 		}
 		$a['Challenges'] = $aList;
 		return array($bUsable, $a);
+	}
+
+	/** Whether a stateless login challenge was already signed (2.31.0). Hashed: the list says nothing reusable. */
+	public static function challengeSpent(array $a, string $sChallenge, int $iNow) : bool
+	{
+		$sHash = \hash('sha256', $sChallenge);
+		foreach ((array) ($a['Spent'] ?? array()) as $c) {
+			if (\is_array($c) && (int) ($c['e'] ?? 0) > $iNow && \hash_equals((string) ($c['h'] ?? ''), $sHash)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/** Marks it signed until it would expire anyway; expired marks are dropped, at most MAX_SPENT kept. */
+	public static function spendChallenge(array $a, string $sChallenge, int $iUntil, int $iNow) : array
+	{
+		$aList = \array_values(\array_filter((array) ($a['Spent'] ?? array()),
+			fn ($c) => \is_array($c) && (int) ($c['e'] ?? 0) > $iNow));
+		$aList[] = array('h' => \hash('sha256', $sChallenge), 'e' => $iUntil);
+		$a['Spent'] = \array_slice($aList, -self::MAX_SPENT);
+		return $a;
 	}
 
 	public static function isLocked(array $a, int $iNow) : bool

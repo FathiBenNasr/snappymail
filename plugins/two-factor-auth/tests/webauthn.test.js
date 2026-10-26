@@ -89,12 +89,13 @@ test('not supported without WebAuthn, nor outside a secure context', () => {
 /* ---- the login screen ---- */
 
 // A fake of the few DOM pieces the login script touches.
-function ecranConnexion(extra = {}) {
+function ecranConnexion(extra = {}, reglages = {}) {
 	const w = fenetre(extra);
 	const ecoute = {}, minuteries = [];
 	const champs = {
 		code: { value: '', focus() { this.focused = (this.focused || 0) + 1; }, dispatchEvent() {} },
 		assertion: { value: '' },
+		email: { value: 'rym@smail.tn', focus() { this.focused = (this.focused || 0) + 1; } },
 		bouton: { hidden: true, ecouteurs: {}, querySelector: () => ({ addEventListener: (n, f) => { champs.bouton.clic = f; } }) },
 		connexion: { clics: 0, click() { this.clics++; w.envoye.push({ code: champs.code.value, assertion: champs.assertion.value }); } }
 	};
@@ -107,6 +108,7 @@ function ecranConnexion(extra = {}) {
 			'#plugin-Login-BottomControlGroup': conteneur,
 			'input[name=totp_code]': champs.code,
 			'input[name=webauthn_assertion]': champs.assertion,
+			'input[name=Email]': champs.email,
 			'.twofactor-key': champs.bouton,
 			'.buttonLogin': champs.connexion
 		})[s] || null }
@@ -119,7 +121,10 @@ function ecranConnexion(extra = {}) {
 		Event: function () {},
 		document: { location: {} }
 	});
-	w.rl = { settings: { get: () => false }, i18n: k => '«' + k + '»' };
+	// 2.31.0: the login screen asks the server for a key's challenge, before any password.
+	w.distants = [];
+	w.rl = { settings: { get: k => reglages[k] ?? false }, i18n: k => '«' + k + '»',
+		pluginRemoteRequest: (cb, action, prm) => { w.distants.push({ action, prm }); w.repDistant && cb(...w.repDistant); } };
 	vm.runInNewContext(lire('js/TwoFactorAuthLogin.js'), w);
 	ecoute['rl-view-model']({ detail: vue });
 	const repondre = d => { ecoute['sm-user-login-response']({ detail: d }); minuteries.splice(0).forEach(f => f()); };
@@ -162,7 +167,7 @@ test('the button: the key answers, the form goes again with the assertion in its
 	assert.strictEqual(e.champs.assertion.value, '');
 });
 
-test('the options are spent: a second press asks the server again (code field emptied), and the key follows', async () => {
+test('the options are spent: a second press asks the server for a challenge, before any password', async () => {
 	const e = ecranConnexion();
 	e.w.reponse = Promise.resolve(credentielle({ clientDataJSON: '{}', authenticatorData: 'AD', signature: 'S' }));
 	e.repondre({ error: 102, data: { messageAdditional: refus(OPTIONS) } });
@@ -170,13 +175,59 @@ test('the options are spent: a second press asks the server again (code field em
 	await attendre();
 	e.repondre({ error: 102, data: { messageAdditional: '' } });
 	e.champs.code.value = '123';
+	e.w.repDistant = [0, { Result: OPTIONS }];
 	e.champs.bouton.clic();
-	assert.deepStrictEqual(e.w.envoye[1], { code: '', assertion: '' });
-	e.repondre({ error: 102, data: { messageAdditional: refus(OPTIONS) } });
 	await attendre();
+	assert.strictEqual(JSON.stringify(e.w.distants), JSON.stringify([{ action: 'WebAuthnLoginOptions', prm: { Email: 'rym@smail.tn' } }]));
 	assert.strictEqual(e.w.appels.length, 2);
-	assert.strictEqual(e.w.envoye.length, 3);
-	assert.ok(e.w.envoye[2].assertion);
+	assert.strictEqual(e.w.envoye.length, 2);
+	assert.deepStrictEqual([e.w.envoye[1].code, !!e.w.envoye[1].assertion], ['', true]);
+});
+
+/* ---- 2.31.0: the key before the password ---- */
+
+test('keys on for this webmail: the button is there from the start, for every visitor', () => {
+	assert.strictEqual(ecranConnexion({}, { TwoFactorKeyLogin: true }).champs.bouton.hidden, false);
+	assert.strictEqual(ecranConnexion({}, {}).champs.bouton.hidden, true);
+	assert.strictEqual(ecranConnexion({ PublicKeyCredential: undefined }, { TwoFactorKeyLogin: true }).champs.bouton.hidden, true);
+});
+
+test('the button: challenge for the typed address, then the key, then the form with password and assertion', async () => {
+	const e = ecranConnexion({}, { TwoFactorKeyLogin: true });
+	e.w.reponse = Promise.resolve(credentielle({ clientDataJSON: '{}', authenticatorData: 'AD', signature: 'S' }));
+	e.w.repDistant = [0, { Result: OPTIONS }];
+	e.champs.bouton.clic();
+	await attendre();
+	assert.strictEqual(e.w.distants[0].prm.Email, 'rym@smail.tn');
+	assert.strictEqual(e.w.envoye.length, 1);
+	assert.strictEqual(JSON.parse(e.w.envoye[0].assertion).response.signature, b64u('S'));
+});
+
+test('no address typed: asked for, nothing requested', () => {
+	const e = ecranConnexion({}, { TwoFactorKeyLogin: true });
+	e.champs.email.value = '  ';
+	e.champs.bouton.clic();
+	assert.strictEqual(e.vue.erreur, '«PLUGIN_2FA/ERROR_EMAIL_FOR_KEY»');
+	assert.strictEqual(e.champs.email.focused, 1);
+	assert.strictEqual(e.w.distants.length, 0);
+});
+
+test('the server gives no challenge: said, nothing signed nor sent', async () => {
+	const e = ecranConnexion({}, { TwoFactorKeyLogin: true });
+	e.w.repDistant = [0, { Result: false }];
+	e.champs.bouton.clic();
+	await attendre();
+	assert.strictEqual(e.vue.erreur, '«PLUGIN_2FA/ERROR_PASSKEY_FAILED»');
+	assert.strictEqual(e.w.appels.length, 0);
+	assert.strictEqual(e.w.envoye.length, 0);
+});
+
+test('a refused login keeps the button where keys are on', () => {
+	const e = ecranConnexion({}, { TwoFactorKeyLogin: true });
+	e.repondre({ error: 102, data: { messageAdditional: '' } });
+	assert.strictEqual(e.champs.bouton.hidden, false);
+	e.repondre({ error: 102, data: { messageAdditional: 'TwoFactorCodeRequired' } });
+	assert.strictEqual(e.champs.bouton.hidden, false);
 });
 
 test('cancelled at the key: said, and nothing is sent', async () => {

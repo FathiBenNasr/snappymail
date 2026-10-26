@@ -10,29 +10,18 @@
 
 	let loginView = null,
 		// 2.28.0: the request options of the account's security keys, sent
-		// by the server after a right password; spent once used.
-		keyOptions = null,
-		wantKey = false;
+		// by the server after a right password; spent once used. Since
+		// 2.31.0 the login screen asks for them itself, before the password.
+		keyOptions = null;
 
 	const
 		webauthn = () => window.TwoFactorWebAuthn,
 		dom = sel => loginView?.viewModelDom?.querySelector(sel),
 		showKey = on => { const b = dom('.twofactor-key'); b && (b.hidden = !on); },
-		// The password is still in the form: the key is the second step, sent
-		// with it in a hidden field, through the core's own sign-in button.
-		submit = () => dom('.buttonLogin')?.click(),
-		useKey = () => {
-			if (!keyOptions) {
-				// Spent (a failed try): the form is sent again without a factor,
-				// the server answers with a new challenge, and the key follows.
-				wantKey = true;
-				const code = dom('input[name=totp_code]');
-				code && (code.value = '', code.dispatchEvent(new Event('input')));
-				submit();
-				return;
-			}
-			const options = keyOptions;
-			keyOptions = null;
+		// 2.31.0: offered from the start wherever keys are on — for every
+		// visitor, so the button says nothing about any account.
+		keyLogin = () => !!(rl.settings.get('TwoFactorKeyLogin') && webauthn()?.supported()),
+		sign = options => {
 			webauthn().get(options).then(json => {
 				const field = dom('input[name=webauthn_assertion]');
 				if (field) {
@@ -43,6 +32,33 @@
 				// Cancelled, timed out, or no such key here: say so, the code stays possible.
 				loginView.submitError(rl.i18n('PLUGIN_2FA/ERROR_PASSKEY_FAILED'));
 			});
+		},
+		// The password is still in the form: the key is the second step, sent
+		// with it in a hidden field, through the core's own sign-in button.
+		submit = () => dom('.buttonLogin')?.click(),
+		useKey = () => {
+			if (keyOptions) {
+				const options = keyOptions;
+				keyOptions = null;
+				sign(options);
+				return;
+			}
+			// The challenge is asked for this address, before any password: the
+			// server judges the key first, and the password only then.
+			const email = String(dom('input[name=Email]')?.value || '').trim();
+			if (!email) {
+				loginView.submitError(rl.i18n('PLUGIN_2FA/ERROR_EMAIL_FOR_KEY'));
+				dom('input[name=Email]')?.focus();
+				return;
+			}
+			const code = dom('input[name=totp_code]');
+			code && (code.value = '', code.dispatchEvent(new Event('input')));
+			rl.pluginRemoteRequest((error, data) => {
+				const options = !error && data?.Result;
+				options && 'string' === typeof options.challenge
+					? sign(options)
+					: loginView.submitError(rl.i18n('PLUGIN_2FA/ERROR_PASSKEY_FAILED'));
+			}, 'WebAuthnLoginOptions', { Email: email });
 		};
 
 	addEventListener('rl-view-model', e => {
@@ -66,6 +82,7 @@
 					+ rl.i18n('PLUGIN_2FA/BUTTON_USE_PASSKEY') + '</button></div>');
 				button.querySelector('button')?.addEventListener('click', useKey);
 				container.append(button);
+				showKey(keyLogin());
 			}
 		}
 	});
@@ -84,19 +101,13 @@
 		const additional = e.detail?.data?.messageAdditional || '';
 		if (e.detail?.error && loginView && /^TwoFactorCodeRequired(:|$)/.test(additional)) {
 			keyOptions = webauthn()?.supported() ? webauthn().fromRefusal(additional) : null;
-			showKey(!!keyOptions);
+			showKey(!!keyOptions || keyLogin());
 			queueMicrotask(() => {
 				loginView.submitError(rl.i18n(keyOptions ? 'PLUGIN_2FA/ERROR_CODE_OR_KEY_REQUIRED' : 'PLUGIN_2FA/ERROR_CODE_REQUIRED'));
 				loginView.submitErrorAdditional('');
-				if (keyOptions && wantKey) {
-					wantKey = false;
-					useKey();
-				} else {
-					dom('input[name=totp_code]')?.focus();
-				}
+				dom('input[name=totp_code]')?.focus();
 			});
 		} else {
-			wantKey = false;
 			e.detail?.error || (keyOptions = null, showKey(false));
 			// 2.30.0: the server judges the code before the password, and a
 			// login without the code is refused like a wrong password — saying

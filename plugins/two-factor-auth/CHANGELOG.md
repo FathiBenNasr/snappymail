@@ -3,6 +3,18 @@
 Les versions antérieures à 2.30.0 sont décrites, avec leurs mesures, dans
 [`TODO.md`](TODO.md).
 
+## 2.31.0 — 26 octobre 2026
+
+* **La clé de sécurité est vérifiée avant le mot de passe**, comme le code depuis
+  la 2.30.0. Un compte protégé par une clé n'envoie plus son mot de passe à
+  l'annuaire sans que la clé ait répondu. Ces comptes ne peuvent donc plus
+  être verrouillés par un inconnu.
+* À l'écran : le bouton « Utiliser une clé de sécurité » est présent dès
+  l'ouverture de la page, partout où les clés sont allumées. Saisir l'adresse et
+  le mot de passe, puis toucher la clé : la connexion part d'elle-même.
+* La réponse est la même pour toutes les adresses, qu'elles aient une clé ou
+  non, et rien n'est écrit tant qu'une clé n'a pas signé.
+
 ## 2.30.0 — 26 octobre 2026
 
 * **Le code est vérifié avant le mot de passe.** Pour un compte dont le code

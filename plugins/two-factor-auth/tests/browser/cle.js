@@ -20,6 +20,7 @@
  * itself -> forced again -> logout.
  */
 const puppeteer = require('/app/scripts/node_modules/puppeteer');
+const fs = require('fs');
 const BASE = process.env.BASE || 'http://banc-smail.test:8932';
 const HOTE = new URL(BASE).hostname;
 const A = process.env.A, MDP = process.env.MDP, MESURE = !!process.env.MESURE;
@@ -70,7 +71,19 @@ const REFUS = 'TwoFactorSetupRequired';
 		}));
 		await (el || p).screenshot({ path: CAPTURES + '/' + nom + '.png' });
 	};
-	const connecter = async () => {
+	// 2.31.0: the failures the directory counted, asked of the host (preparer.sh), as in avant.js.
+	const echecsAnnuaire = async etape => {
+		try { fs.unlinkSync('/essai/two-factor-auth/lu'); } catch (e) {}
+		fs.writeFileSync('/essai/two-factor-auth/etape', etape);
+		for (let i = 0; i < 120; i++) {
+			await pause(500);
+			try { const s = fs.readFileSync('/essai/two-factor-auth/lu', 'utf8').trim(); if (/^\d+$/.test(s)) return +s; } catch (e) {}
+		}
+		return null;
+	};
+	const reponseLogin = () => p.waitForResponse(r => 'POST' === r.request().method() && /"Action":"Login"/.test(r.request().postData() || ''), { timeout: 60000 })
+		.then(r => r.json()).catch(() => ({}));
+	const connecter = async (mdp = MDP, envoyer = true) => {
 		await p.goto(BASE + '/', { waitUntil: 'domcontentloaded', timeout: 90000 });
 		await p.waitForSelector('input[type=password]', { visible: true, timeout: 90000 });
 		// 2.29.0: the refusal carries the key's request options; count every
@@ -83,8 +96,8 @@ const REFUS = 'TwoFactorSetupRequired';
 		});
 		const champ = await p.$('input[name=Email], input[type=email]');
 		await champ.click({ clickCount: 3 }); await champ.type(A);
-		await p.type('input[type=password]', MDP);
-		await p.keyboard.press('Enter');
+		await p.type('input[type=password]', mdp);
+		envoyer && await p.keyboard.press('Enter');
 	};
 	// The onboarding plugin may ask for a display name, at each login: answer it, as a person would.
 	const fermerIdentite = () => p.evaluate(() => { const d = [...document.querySelectorAll('dialog[open]')].find(x => /identit/i.test(x.textContent || '')); if (!d) return; const i = d.querySelector('input[type=text], input:not([type])'); if (i) { i.value = 'Essai'; i.dispatchEvent(new Event('input', { bubbles: true })); } const b = [...d.querySelectorAll('button')].find(x => /Enregistrer|Save/i.test(x.textContent || '')); b && b.click(); });
@@ -129,13 +142,24 @@ const REFUS = 'TwoFactorSetupRequired';
 		await p.waitForSelector('input[type=password]', { visible: true, timeout: 30000 });
 
 		phase = 'connexion-cle';
-		await connecter();
-		await p.waitForSelector('.twofactor-key:not([hidden])', { visible: true, timeout: 30000 }).catch(() => {});
-		verifier(!!(await p.$('.twofactor-key:not([hidden])')), 'le mot de passe juste, le bouton « clé de sécurité » apparaît');
+		// 2.31.0: the key is judged before the password. No factor: refused
+		// like a wrong password, and the directory counts nothing.
+		const n0 = await echecsAnnuaire('cle-inscrite');
+		await p.goto(BASE + '/', { waitUntil: 'domcontentloaded', timeout: 90000 });
+		await p.waitForSelector('input[type=password]', { visible: true, timeout: 90000 });
+		verifier(!!(await p.$('.twofactor-key:not([hidden])')), 'le bouton « clé de sécurité » est là d\'emblée, avant toute adresse : pour tout visiteur');
+		for (const [quoi, mdp] of [['mot de passe faux, sans facteur', 'Faux' + MDP.slice(4)], ['mot de passe juste, sans facteur', MDP]]) {
+			const r = reponseLogin();
+			await connecter(mdp);
+			const j = await r;
+			verifier(!j.Result && 102 === j.code && '' === (j.messageAdditional || ''), quoi + ' : refusé comme un mot de passe faux, sans nommer la clé (code ' + j.code + ', « ' + (j.messageAdditional || '') + ' »)');
+			await pause(800);
+		}
+		const n1 = await echecsAnnuaire('cle-refus');
+		verifier(null !== n0 && n1 === n0, 'ces deux refus n\'ont pas atteint l\'annuaire : ' + n0 + ' → ' + n1 + ' échec(s)');
+		await connecter(MDP, false);
 		await pause(500);
 		verifier(0 === await p.evaluate(() => window.__defiPeint), 'le défi de la clé n\'est peint à aucune image (' + await p.evaluate(() => window.__defiPeint) + ')');
-		const message = await p.evaluate(() => (document.querySelector('.alert:not([hidden]) span') || {}).textContent || '');
-		verifier(/clé|key/i.test(message), 'le message nomme le code et la clé (« ' + message.trim() + ' »)');
 		// The form and the message above it: their common parent.
 		await p.evaluate(() => { const f = document.querySelector('.twofactor-key').closest('form'); f && f.parentElement.setAttribute('data-capture', 'connexion'); });
 		await capture('cle-2-connexion', '[data-capture=connexion]');
@@ -152,7 +176,7 @@ const REFUS = 'TwoFactorSetupRequired';
 			await p.evaluate(() => rl.app.logout());
 			await p.waitForSelector('input[type=password]', { visible: true, timeout: 30000 });
 			await p.setExtraHTTPHeaders({ 'Accept-Language': langue });
-			await connecter();
+			await connecter(MDP, false);
 			await p.waitForSelector('.twofactor-key:not([hidden])', { visible: true, timeout: 30000 }).catch(() => {});
 			const bouton = await p.$eval('.twofactor-key button', b => b.textContent.trim()).catch(() => '');
 			verifier(motif.test(bouton), langue + ' : le bouton parle la langue (« ' + bouton + ' »)');

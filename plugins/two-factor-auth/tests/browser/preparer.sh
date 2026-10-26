@@ -91,7 +91,7 @@ A="$A@smail.tn" MESURE=${MESURE:-} podman exec -e MDP -e A -e MESURE \
 	${CAPTURES:+-e CAPTURES=/essai/two-factor-auth/captures} \
 	puppeteer-test node /essai/two-factor-auth/$BANC.js &
 NOEUD=$!
-if [ avant = "$BANC" ]; then
+if [ avant = "$BANC" ] || [ cle = "$BANC" ]; then
 	VU=
 	while kill -0 $NOEUD 2>/dev/null; do
 		E=$(podman exec puppeteer-test cat /essai/two-factor-auth/etape 2>/dev/null || true)

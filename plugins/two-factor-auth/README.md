@@ -38,15 +38,24 @@ What this would open, and how it is closed:
   record's lock or writing it. The limit is per IP (fail2ban). Each right code
   lets one password through once (its time step is spent): guessing the
   password now costs some 330 000 guessed codes per try.
-* **Security keys** keep their order — the challenge is issued after a right
-  password — so an account with a key and no code typed keeps today's
-  exposure. A typed code is still judged first; an assertion only goes past
-  for an account that has a key.
+* **Security keys** too, since 2.31.0. The login screen offers "Use a
+  security key" from the start, wherever keys are on, to every visitor. The
+  button asks `WebAuthnLoginOptions` for the typed address. The answer is the
+  same for every address: an address without a key gets decoy credential ids,
+  derived from it, stable, and 64 bytes long. The challenge is **stateless**
+  (random bytes, an expiry, and a MAC over the address and the browser's
+  connection token): nothing is written until a key signs it, so a flood of
+  requests cannot push the owner's challenges out. The assertion is then
+  judged before the password, written only on success, and its challenge is
+  marked spent, which stops the replay of a passkey that has no counter.
 * **Not covered:** IMAP and SMTP clients, which reach the directory directly
   (app passwords and the directory's slowdown guard them).
 
-Proved on banc-smail (`BANC=avant`): three refusals, 0 failures counted by the
-directory; the control (right code, wrong password) counts exactly one.
+Proved on banc-smail:
+* `BANC=avant`: three refusals, 0 failures counted by the directory; the
+  control (right code, wrong password) counts exactly one;
+* `BANC=cle`: two logins without a factor, 0 failures counted, then the key
+  logs in.
 
 ## Settings (admin panel → plugin)
 

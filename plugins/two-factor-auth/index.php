@@ -11,7 +11,7 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 {
 	const
 		NAME     = 'Two Factor Authentication',
-		VERSION  = '2.30.0',
+		VERSION  = '2.31.0',
 		RELEASE  = '2026-10-26',
 		REQUIRED = '2.36.0',
 		CATEGORY = 'Login',
@@ -88,6 +88,8 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 		$this->addJsonHook('WebAuthnCreateOptions', 'DoWebAuthnCreateOptions');
 		$this->addJsonHook('WebAuthnRegister', 'DoWebAuthnRegister');
 		$this->addJsonHook('WebAuthnAssertOptions', 'DoWebAuthnAssertOptions');
+		// 2.31.0: a key's challenge for the login screen, before any password.
+		$this->addJsonHook('WebAuthnLoginOptions', 'DoWebAuthnLoginOptions');
 		$this->addJsonHook('WebAuthnRename', 'DoWebAuthnRename');
 		$this->addJsonHook('WebAuthnRemove', 'DoWebAuthnRemove');
 
@@ -176,6 +178,9 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 			$aResult['RequireTwoFactor'] = (bool) $this->Config()->Get('plugin', 'force_two_factor_auth', false);
 
 			$aResult['SetupTwoFactor'] = false;
+			// 2.31.0: the login screen offers a security key whenever keys are on
+			// for this webmail — for every visitor, so it says nothing of anyone.
+			$aResult['TwoFactorKeyLogin'] = null !== $this->webAuthnConf();
 			if (!empty($aResult['Auth'])) {
 				$oAccount = $this->getMainAccountFromToken();
 				// Per tenant (2.26.0): a domain in the list is held to the
@@ -467,9 +472,10 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 	 *    password now costs some 330 000 guessed codes per try.
 	 *  - A wrong code is judged without the lock and without writing: an
 	 *    attacker's attempts never hold the owner's record.
-	 *  - Security keys: their challenge is issued only after a right password
-	 *    (2.28.0). An account with keys therefore keeps that order when no
-	 *    code is typed — it keeps today's exposure, not less.
+	 *  - Security keys (2.31.0): the challenge is asked for by the login
+	 *    screen before any password (DoWebAuthnLoginOptions) and judged here.
+	 *    Until 2.30.0 it was issued after a right password, so an account
+	 *    with a key let its password through to the directory.
 	 *  - IMAP and SMTP clients are not covered: they reach the directory
 	 *    directly (app passwords and the slowdown of the policy guard them).
 	 */
@@ -479,15 +485,14 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 		if (!$aRecord || !TwoFactorRecord::isOn($aRecord, $this->recordKey())) {
 			return;
 		}
-		$bKeys = $this->webAuthnConf() && TwoFactorRecord::passkeys($aRecord, $this->recordKey());
+		$sAssertion = \trim((string) $this->jsonParam('webauthn_assertion', ''));
 		$sCode = \trim((string) $this->jsonParam('totp_code', ''));
-		if ('' !== \trim((string) $this->jsonParam('webauthn_assertion', '')) || '' === $sCode) {
-			// A key's assertion answers a challenge issued after the password:
-			// DoLogin judges it. Only an account that has a key may go that
-			// way — or any assertion, even junk, would carry a password past here.
-			if ($bKeys) {
-				return;
-			}
+		if ('' !== $sAssertion) {
+			// 2.31.0: a key is judged here too, against the challenge the login
+			// screen asked for (DoWebAuthnLoginOptions) — so an account with
+			// a key is no longer the exception: no factor, no directory.
+			$sOutcome = $this->checkAssertionBeforePassword($oAccount, $sAssertion);
+		} else if ('' === $sCode) {
 			$sOutcome = 'missing';
 		} else {
 			$sOutcome = $this->checkCodeBeforePassword($oAccount, $sCode);
@@ -550,6 +555,172 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 		$fStart = (float) ($_SERVER['REQUEST_TIME_FLOAT'] ?? \microtime(true));
 		$fLeft = $fDelay - (\microtime(true) - $fStart);
 		0 < $fLeft && \usleep((int) ($fLeft * 1000000));
+	}
+
+	/* ---- 2.31.0: a security key before the password ---- */
+
+	/** How long a login challenge lasts, and the size of its parts. */
+	const LOGIN_CHALLENGE_TTL = 300;
+
+	/**
+	 * The request options of a login with a key, before any password.
+	 *
+	 * Anyone may ask, for any address: so the answer must not tell which
+	 * accounts have a key, and must not write anything.
+	 *  - The challenge is stateless: random bytes, an expiry and a MAC (key
+	 *    derived from APP_SALT) over them, the address and the browser's
+	 *    connection token. Nothing is stored until a key signs it, so a flood
+	 *    of requests cannot push the owner's challenges out of the record.
+	 *  - An address without a key gets one or two credential ids derived from
+	 *    it (always the same ones for the same address, as a real account's
+	 *    are), of the length of a security key's. A real account's list keeps
+	 *    its own ids and number. Only an authenticator that holds the key can
+	 *    tell them apart.
+	 */
+	public function DoWebAuthnLoginOptions() : array
+	{
+		$aConf = $this->webAuthnConf();
+		$sBinding = $this->loginBinding();
+		$sEmail = $this->loginEmail((string) $this->jsonParam('Email', ''));
+		if (!$aConf || '' === $sBinding || '' === $sEmail) {
+			return $this->jsonResponse(__FUNCTION__, false);
+		}
+		$aKeys = null;
+		try {
+			$aRecord = $this->loadRecordFor($sEmail);
+			$aKeys = $aRecord && TwoFactorRecord::isOn($aRecord, $this->recordKey())
+				? TwoFactorRecord::passkeys($aRecord, $this->recordKey()) : null;
+		} catch (\Throwable $oError) {
+		}
+		if (!$aKeys) {
+			$aKeys = static::decoyKeys($sEmail, $this->recordKey());
+		}
+		$sChallenge = static::loginChallenge($sEmail, $sBinding, \time() + \min($aConf['ttl'], self::LOGIN_CHALLENGE_TTL), $this->recordKey());
+		return $this->jsonResponse(__FUNCTION__, static::requestOptions($aKeys, $sChallenge, $aConf));
+	}
+
+	/**
+	 * The address a login with $sEmail will be about: the core's own
+	 * resolution (default domain, the login.credentials of other plugins),
+	 * with a password that is never used. Empty when it cannot be had.
+	 */
+	protected function loginEmail(string $sEmail) : string
+	{
+		$sEmail = \MailSo\Base\Utils::Trim($sEmail);
+		if ('' === $sEmail || \strlen($sEmail) > 320) {
+			return '';
+		}
+		try {
+			$oActions = $this->Manager()->Actions();
+			$a = \Closure::bind(fn () => $this->resolveLoginCredentials($sEmail, new \SnappyMail\SensitiveString('********')),
+				$oActions, \RainLoop\Actions::class)();
+			$sEmail = (string) ($a['email'] ?? '');
+		} catch (\Throwable $oError) {
+			$sEmail = '';
+		}
+		// Our own login.credentials hook ran too: this was no login.
+		$this->bLoggingIn = false;
+		return \str_contains($sEmail, '@') ? $sEmail : '';
+	}
+
+	/** Decoy credential ids for an address without a key: 1 or 2, 64 bytes, stable. */
+	public static function decoyKeys(string $sEmail, string $sKey) : array
+	{
+		$sSeed = \hash_hmac('sha512', 'decoy|' . \strtolower($sEmail), $sKey, true);
+		$aKeys = array();
+		for ($i = 0, $n = 1 + (\ord($sSeed[0]) & 1); $i < $n; ++$i) {
+			$aKeys[] = array('Id' => TwoFactorWebAuthn::b64u(\hash_hmac('sha512', "decoy|{$i}|" . \strtolower($sEmail), $sKey, true)));
+		}
+		return $aKeys;
+	}
+
+	/** A stateless login challenge: random (16) . expiry (4) . MAC (16), base64url. */
+	public static function loginChallenge(string $sEmail, string $sBinding, int $iExpiry, string $sKey) : string
+	{
+		$sBody = \random_bytes(16) . \pack('N', $iExpiry);
+		return TwoFactorWebAuthn::b64u($sBody . static::loginMac($sBody, $sEmail, $sBinding, $sKey));
+	}
+
+	protected static function loginMac(string $sBody, string $sEmail, string $sBinding, string $sKey) : string
+	{
+		return \substr(\hash_hmac('sha256', "login-key|{$sBody}|" . \strtolower($sEmail) . '|' . $sBinding, $sKey, true), 0, 16);
+	}
+
+	/** Whether $sChallenge is one of ours, for this address and this browser, and not expired. */
+	public static function loginChallengeValid(?string $sChallenge, string $sEmail, string $sBinding, int $iNow, string $sKey) : bool
+	{
+		if (null === $sChallenge || '' === $sBinding || !\preg_match('/^[A-Za-z0-9_-]{48}$/', $sChallenge)) {
+			return false;
+		}
+		$s = TwoFactorWebAuthn::unb64u($sChallenge);
+		if (36 !== \strlen($s)) {
+			return false;
+		}
+		$sBody = \substr($s, 0, 20);
+		$iExpiry = \unpack('N', \substr($s, 16, 4))[1];
+		return \hash_equals(static::loginMac($sBody, $sEmail, $sBinding, $sKey), \substr($s, 20))
+			&& $iExpiry > $iNow && $iExpiry <= $iNow + self::LOGIN_CHALLENGE_TTL + 60;
+	}
+
+	/**
+	 * A key's assertion before the password: 'ok', or why not. As for a code,
+	 * a failure writes nothing and counts nothing; a success is judged again
+	 * under the lock, on the record read there, and stored: the key's counter,
+	 * its last use, and the challenge spent (kept until it expires).
+	 */
+	protected function checkAssertionBeforePassword(MainAccount $oAccount, string $sJson) : string
+	{
+		$aConf = $this->webAuthnConf();
+		$sBinding = $this->loginBinding();
+		if (!$aConf || '' === $sBinding) {
+			return 'unavailable';
+		}
+		$sKey = $this->recordKey();
+		$sEmail = $oAccount->Email();
+		$fJudge = function (array $aRecord) use ($sJson, $sEmail, $sBinding, $aConf, $sKey) : array {
+			$iNow = \time();
+			if (TwoFactorRecord::isLocked($aRecord, $iNow)) {
+				return array('locked', null, null);
+			}
+			try {
+				$aCredential = TwoFactorWebAuthn::decodeCredential($sJson);
+				$sPresented = TwoFactorWebAuthn::presentedChallenge($aCredential);
+				$bOurs = static::loginChallengeValid($sPresented, $sEmail, $sBinding, $iNow, $sKey)
+					&& !TwoFactorRecord::challengeSpent($aRecord, (string) $sPresented, $iNow);
+				$aKeys = TwoFactorRecord::passkeys($aRecord, $sKey) ?? array();
+				$aResult = TwoFactorWebAuthn::assert($aCredential, array(
+					'challenge' => $bOurs ? $sPresented : null,
+					'userHandle' => (string) ($aRecord['UserHandle'] ?? '')
+				) + $aConf, $aKeys);
+			} catch (TwoFactorWebAuthnError $oError) {
+				return array('webauthn-' . $oError->getMessage(), null, null);
+			}
+			$aKeys[$aResult['index']]['SignCount'] = $aResult['signCount'];
+			$aKeys[$aResult['index']]['LastUsed'] = $iNow;
+			$aRecord = TwoFactorRecord::spendChallenge(TwoFactorRecord::withPasskeys($aRecord, $aKeys, $sKey),
+				(string) $sPresented, $iNow + self::LOGIN_CHALLENGE_TTL + 60, $iNow);
+			return array('ok', TwoFactorRecord::recordSuccess($aRecord, null), $aResult);
+		};
+		$aRecord = $this->loadRecord($oAccount);
+		if (!$aRecord) {
+			return 'webauthn-unknown-credential';
+		}
+		[$sOutcome] = $fJudge($aRecord);
+		if ('ok' !== $sOutcome) {
+			return $sOutcome;
+		}
+		return $this->underLock($oAccount, function () use ($oAccount, $fJudge) {
+			$aRecord = $this->loadRecord($oAccount);
+			if (!$aRecord) {
+				return 'webauthn-unknown-credential';
+			}
+			[$sOutcome, $aNew, $aResult] = $fJudge($aRecord);
+			if ('ok' !== $sOutcome) {
+				return $sOutcome;
+			}
+			$aResult['regression'] && $this->Logger()->Write("TFA: signature counter went back for {$oAccount->Email()}, accepted (webauthn_counter_regression = warn)");
+			return $this->saveRecord($oAccount, $aNew) ? 'ok' : 'busy';
+		}) ?? 'busy';
 	}
 
 	/**
@@ -635,7 +806,7 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 		$aNew = TwoFactorRecord::create($oAccount->Email(), $sSecret, $aCodes, $this->recordKey());
 		// What the TOTP does not own stays: the keys, their user handle, the
 		// pending challenges, and the lockout — a new secret is no way out of it.
-		foreach (array('PasskeysBox', 'UserHandle', 'Challenges', 'Failures', 'LockedUntil') as $sKey) {
+		foreach (array('PasskeysBox', 'UserHandle', 'Challenges', 'Spent', 'Failures', 'LockedUntil') as $sKey) {
 			$aExisting && isset($aExisting[$sKey]) && $aNew[$sKey] = $aExisting[$sKey];
 		}
 		$this->saveRecord($oAccount, $aNew);

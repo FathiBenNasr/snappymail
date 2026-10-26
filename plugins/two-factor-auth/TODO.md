@@ -1,5 +1,44 @@
 # two-factor-auth — TODO
 
+## 26 octobre 2026 — 2.31.0 : la clé de sécurité aussi, avant le mot de passe
+
+* **Demandé par le propriétaire** : *« applique la même vérification aux comptes à
+  clé de sécurité »*. Jusqu'à la 2.30.0, le défi de la clé ne partait qu'après un
+  mot de passe juste. Un compte à clé laissait donc passer son mot de passe vers
+  l'annuaire.
+* **Fait.** L'écran de connexion demande le défi lui-même, avant tout mot de passe
+  (`DoWebAuthnLoginOptions`, ouvert à tous). `CheckBeforePassword` juge ensuite
+  l'assertion. Un compte qui a un second facteur et n'en présente aucun est
+  refusé, qu'il ait une clé ou non.
+* **Les parades de cette action ouverte à tous** :
+  * **défi sans état** : 16 octets aléatoires, une expiration (5 min), et un MAC
+    (clé tirée d'`APP_SALT`) sur l'adresse et le jeton de connexion du
+    navigateur. Rien n'est écrit avant qu'une clé signe : la liste `Challenges`
+    de l'enregistrement, plafonnée à 8, ne peut pas être inondée ;
+  * **leurres** : une adresse sans clé reçoit 1 ou 2 identifiants tirés d'elle,
+    stables, de 64 octets. La forme de la réponse est la même ;
+  * **défi dépensé** : son empreinte est gardée jusqu'à son expiration (`Spent`, au
+    plus 64). Sans cela, une clé d'accès sans compteur (la plupart) se rejouerait ;
+  * **un échec n'écrit rien** ; un succès est rejugé sous le verrou, puis écrit
+    (compteur, dernière utilisation, défi dépensé).
+* Essais : PHP Actions 254 (+29), JS 39 (+5). 9 mutations sur 9 tuées, dont « défi
+  dépensé ignoré ». Celle-ci ne mourait d'abord que par le compteur de la clé ;
+  elle est tuée depuis l'ajout du cas d'une clé sans compteur.
+* Bancs (banc-smail) :
+  * `cle` 39/39 : bouton présent d'emblée, deux refus sans facteur, **0 → 0
+    échec dans l'annuaire**, puis connexion par la clé en fr, en et ar ;
+  * `avant` 19/19 et `forcer` 34/34.
+* ⚠️ **Ce qui reste visible** : le *nombre* et la longueur des identifiants d'un
+  vrai compte ne sont pas imités. Seul un authentificateur qui détient la clé
+  distingue un leurre ; un observateur voit une ou deux clés dans tous les cas.
+* **Allumé sur fastmail le même jour**, demande du propriétaire :
+  * `webauthn_origins` = `https://fastmail.convergent.tn` ;
+  * `webauthn_rp_id` = `fastmail.convergent.tn`, et non `convergent.tn`. Une clé
+    liée à `convergent.tn` répondrait à **tout** sous-domaine de convergent.tn :
+    un seul sous-domaine compromis suffirait à lui demander des signatures. Le
+    changer plus tard rendrait inutilisables les clés inscrites. smail suit la
+    même règle (`webmail.smail.tn`).
+
 ## 26 octobre 2026 — 2.30.0 : le code avant le mot de passe (TODO de la suite §72)
 
 * **Fait.** `login.credentials` arme un drapeau, et le `filter.account` qui suit
