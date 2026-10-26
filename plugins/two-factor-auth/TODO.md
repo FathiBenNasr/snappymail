@@ -1,5 +1,46 @@
 # two-factor-auth — TODO
 
+## 26 octobre 2026 — 2.30.0 : le code avant le mot de passe (TODO de la suite §72)
+
+* **Fait.** `login.credentials` arme un drapeau, et le `filter.account` qui suit
+  (`CheckBeforePassword`) juge le code **avant** `imapConnect`. Ce même
+  `filter.account` sert aussi à chaque requête, quand le compte est reconstruit
+  depuis son cookie : c'est pourquoi un drapeau est nécessaire. Il est consommé
+  par le premier compte filtré, quel qu'il soit (une configuration de compte
+  additionnel ne le laisse pas au suivant), et ignoré dans le panneau
+  d'administration (`DoAdminDomainMatch` résout aussi des identifiants).
+  `DoLogin` (`login.success`) ne rejuge pas un code déjà accepté, sinon il
+  l'appellerait un rejeu ; il reste le filet de sécurité pour les clés et pour
+  tout chemin qui n'aurait pas armé le drapeau.
+* Les parades, chacune tenue par un essai et par une mutation tuée (9 sur 9) :
+  1. le refus est celui du cœur pour un mot de passe faux (`AuthError`, sans nom) ;
+  2. il attend `precheck_delay` ;
+  3. un code faux n'écrit rien, donc aucun verrou ne peut servir d'arme ;
+  4. un code juste est rejugé sous le verrou et dépensé ;
+  5. un verrou tenu par une autre requête fait refuser le code (`busy`) ;
+  6. une assertion ne passe que si le compte a une clé, sinon n'importe quelle
+     assertion de pacotille emporterait le mot de passe ;
+  7. le panneau d'administration n'est pas pris pour une connexion ;
+  8. l'attente est bornée à 10 s.
+* **Banc `BANC=avant` (banc-smail, vrai Cyrus, vrai annuaire o=sky), 19/19.** La
+  preuve est le compte de l'annuaire lui-même : l'hôte lit les `pwdFailureTime`
+  du compte éphémère à chaque étape.
+  * Trois refus (bon mot de passe et code faux, mot de passe faux sans code, mot
+    de passe faux et code faux) : **0 → 0 échec compté**, chacun refusé en code
+    102 sans nom et en 5,0 s.
+  * Le témoin (code juste, mot de passe faux) : **0 → 1**, en 5,0 s lui aussi. La
+    durée est la même, parce que le `fault_delay` du banc arrondit les deux.
+  * Puis la vraie connexion s'ouvre.
+  * Bancs `forcer` 34/34 et `cle` 37/37 inchangés.
+* Essais : PHP Actions 225 (+31), Record 54, WebAuthn 92 ; JS 34 (+3).
+* ⚠️ **Exposition restante, par choix.** Un compte qui a une clé et dont le
+  propriétaire n'a pas tapé de code passe encore par le mot de passe d'abord,
+  comme avant : émettre le défi avant le mot de passe dirait qui a une clé, et
+  ferait écrire l'enregistrement par n'importe qui. IMAP et SMTP directs ne sont
+  pas couverts.
+* **Pas encore déployé** au moment de cette entrée.
+
+
 ## 13 octobre 2026 — 2.29.0 : les deux restes de la 2.28.0 (A10)
 
 * **Le défi ne s'affiche plus, pas même une image.** Le refus `TwoFactorCodeRequired:`

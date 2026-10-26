@@ -29,7 +29,7 @@ function charger() {
 	vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../js/TwoFactorAuthLogin.js'), 'utf8'), bac);
 	ecoute['rl-view-model']({ detail: vue });
 	const repondre = d => { ecoute['sm-user-login-response']({ detail: d }); minuteries.splice(0).forEach(f => f()); };
-	return { vue, repondre, focalise: () => focalise };
+	return { vue, champ, repondre, focalise: () => focalise };
 }
 
 test('code absent : l\'écran demande le code et y place le curseur', () => {
@@ -40,10 +40,33 @@ test('code absent : l\'écran demande le code et y place le curseur', () => {
 	assert.strictEqual(c.focalise(), 1);
 });
 
-test('mot de passe refusé : le message du cœur reste', () => {
+test('mot de passe refusé, code saisi : le message du cœur reste', () => {
 	const c = charger();
+	c.champ.value = '123456';
 	c.repondre({ error: 102, data: { messageAdditional: '' } });
 	assert.strictEqual(c.vue.erreur, '');
+	assert.strictEqual(c.vue.complement, 'x');
+});
+
+// 2.30.0 : le serveur refuse sans le nommer un compte à second facteur venu
+// sans code. Le rappel naît du champ vide seul : il vaut pour tout compte.
+test('refus avec le champ du code vide : le rappel s\'ajoute, pour tout compte', () => {
+	const c = charger();
+	c.champ.value = '  ';
+	c.repondre({ error: 102, data: { messageAdditional: '' } });
+	assert.strictEqual(c.vue.erreur, '');
+	assert.strictEqual(c.vue.complement, '«PLUGIN_2FA/HINT_CODE_WITH_PASSWORD»');
+});
+
+test('autre erreur que l\'authentification (serveur injoignable) : pas de rappel', () => {
+	const c = charger();
+	c.repondre({ error: 104, data: { messageAdditional: '' } });
+	assert.strictEqual(c.vue.complement, 'x');
+});
+
+test('connexion réussie avec le champ vide : pas de rappel', () => {
+	const c = charger();
+	c.repondre({ error: 0, data: { Result: {} } });
 	assert.strictEqual(c.vue.complement, 'x');
 });
 

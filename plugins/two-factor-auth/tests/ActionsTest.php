@@ -119,6 +119,12 @@ namespace {
 		protected function getMainAccountFromToken() : \RainLoop\Model\MainAccount { return $this->oAccount; }
 		protected function StorageProvider() : \RainLoop\Providers\Storage { return new \RainLoop\Providers\Storage($this->oStore); }
 		protected function logAuthFailure(\RainLoop\Model\MainAccount $o, string $s) : void { ++$this->authFailures; }
+		/** 2.30.0: the wait of a refusal before the password, counted instead of slept. */
+		public int $delays = 0;
+		public bool $realDelay = false;
+		protected function delayLikeAWrongPassword() : void { ++$this->delays; $this->realDelay && parent::delayLikeAWrongPassword(); }
+		/** A new request: the plugin object is new for each one in the core. */
+		public function fresh() : void { \Closure::bind(function () { $this->bLoggingIn = false; $this->sVerifiedBeforePassword = ''; }, $this, TwoFactorAuthPlugin::class)(); }
 		public function Manager() { $p = $this; return new class ($p) {
 			// Private, as in Plugins\Manager: the parts other plugins registered (caldav, files).
 			private array $aAdditionalParts = array('caldavexport' => array(), 'files' => array(), 'twofactorsetuprequired' => array());
@@ -645,6 +651,112 @@ namespace {
 	$check('keys switched off by the administrator: the login still asks for a factor', $connexion($off, array()), 'refused:TwoFactorCodeRequired');
 	$check('… an assertion is refused ("unavailable")', $connexion($off, array('webauthn_assertion' => '{}')), 'refused:');
 	$check('… and a backup code still opens it', $connexion($off, array('totp_code' => \explode(' ', $aO['BackupCodes'])[0])), 'ok');
+
+	/* ---- 2.30.0: the code is judged before the password reaches the directory ---- */
+	// One login as the core runs it: login.credentials, filter.account, then —
+	// only if nothing refused — IMAP (the directory), then login.success.
+	$login = function (P $x, array $aParams) : string {
+		$x->fresh();
+		$x->request();
+		$x->params = $aParams;
+		$x->NoteLogin();
+		try { $x->FilterAccount($x->oAccount); }
+		catch (\RainLoop\Exceptions\ClientException $e) { return 'refused:' . $e->getCode() . ':' . $e->getAdditionalMessage(); }
+		try { $x->DoLogin($x->oAccount); return 'directory+ok'; }
+		catch (\RainLoop\Exceptions\ClientException $e) { return 'directory+refused:' . \explode(':', $e->getAdditionalMessage())[0]; }
+	};
+	$AUTH = 'refused:102:';
+	$b = new P();
+	$b->oAccount = new \RainLoop\Model\MainAccount('salma@smail.tn');
+	$cB = $b->DoCreateTwoFactorSecret()['Result'];
+	$b->params = array('Code' => $previous($cB['Secret'])); $b->DoVerifyTwoFactorCode();
+	$b->params = array('Enable' => '1'); $b->DoEnableTwoFactor();
+	$aBefore = $b->raw();
+
+	$check('before the password: no code, the password never reaches the directory', $login($b, array()), $AUTH);
+	$check('… refused as a wrong password is: AuthError, no name (nothing says the account has a second factor)', $login($b, array('totp_code' => '')), $AUTH);
+	$check('… and it waited like a wrong password', $b->delays, 2);
+	$check('a wrong code: refused before the directory', $login($b, array('totp_code' => '000000')), $AUTH);
+	for ($i = 0; $i < 20; ++$i) { $login($b, array('totp_code' => \sprintf('%06d', 100000 + $i))); }
+	$check('twenty wrong codes write nothing: the record is byte for byte the same', $b->raw(), $aBefore);
+	$check('… so no lockout anyone could trigger: the owner\'s right code still passes, then the password', $login($b, array('totp_code' => $current($cB['Secret']))), 'directory+ok');
+	$check('… judged once, before the password — login.success does not call it a replay', $dernier($b, 'replay'), false);
+	$check('the same code again: refused before the directory (time step spent)', $login($b, array('totp_code' => $current($cB['Secret']))), $AUTH);
+	$check('… named a replay in the plugin log only', $dernier($b, 'TFA: replay for salma@smail.tn, refused before the password'), true);
+	$sBackup = \explode(' ', $cB['BackupCodes'])[0];
+	$check('a backup code passes before the password', $login($b, array('totp_code' => $sBackup)), 'directory+ok');
+	$check('… once', $login($b, array('totp_code' => $sBackup)), $AUTH);
+	$check('an assertion on an account without a key does not carry a password past the check', $login($b, array('webauthn_assertion' => '{"junk":1}')), $AUTH);
+	$check('… nor with a wrong code beside it', $login($b, array('webauthn_assertion' => 'x', 'totp_code' => '000000')), $AUTH);
+
+	// The flag is spent by the first account filtered: a session rebuilt from
+	// its cookie (no login.credentials) is never asked for a code.
+	$b->fresh(); $b->params = array();
+	try { $b->FilterAccount($b->oAccount); $check('a session rebuilt from its cookie is not a login', 'passe', 'passe'); }
+	catch (\Throwable $e) { $check('a session rebuilt from its cookie is not a login', 'refused', 'passe'); }
+	$b->fresh(); $b->NoteLogin();
+	$b->FilterAccount(new \RainLoop\Model\AdditionalAccount('nour@smail.tn'));
+	try { $b->FilterAccount($b->oAccount); $check('an additional account\'s setup spends the flag', 'passe', 'passe'); }
+	catch (\Throwable $e) { $check('an additional account\'s setup spends the flag', 'refused', 'passe'); }
+	$b->fresh(); $b->request(null, true); $b->params = array(); $b->NoteLogin();
+	try { $b->FilterAccount($b->oAccount); $check('the admin panel resolving a login is not one', 'passe', 'passe'); }
+	catch (\Throwable $e) { $check('the admin panel resolving a login is not one', 'refused', 'passe'); }
+
+	// A wrong code never takes the owner's lock; a right one under a held lock fails closed.
+	$b->shortWait();
+	$rHeld = \fopen($b->lockFile(), 'c'); \flock($rHeld, LOCK_EX);
+	$fT = \microtime(true);
+	$check('a wrong code while the record is locked by another request: refused at once', array($login($b, array('totp_code' => '000000')), \microtime(true) - $fT < 0.15), array($AUTH, true));
+	$check('a right code while the lock is held: refused ("busy" is not "ok")', $login($b, array('totp_code' => \explode(' ', $cB['BackupCodes'])[2])), $AUTH);
+	$check('… named busy, and the code is not spent', array($dernier($b, 'TFA: busy for salma@smail.tn'), \count($b->raw()['BackupHashes'])), array(true, 7));
+	\flock($rHeld, LOCK_UN); \fclose($rHeld);
+
+	// A record locked by failures after a right password stays locked here too.
+	$aL = $b->raw(); $aL['LockedUntil'] = \time() + 600; $b->setRaw($aL);
+	$check('a record locked after a right password: refused before the directory as well', $login($b, array('totp_code' => \explode(' ', $cB['BackupCodes'])[1])), $AUTH);
+	$check('… and the backup code is not spent by a locked refusal', \count($b->raw()['BackupHashes']), 7);
+
+	// Accounts without a second factor: nothing changes.
+	$u = new P();
+	$u->oAccount = new \RainLoop\Model\MainAccount('nour@smail.tn');
+	$check('no second factor: no code, the password decides as before', $login($u, array()), 'directory+ok');
+	$check('no second factor: a code typed anyway is ignored', $login($u, array('totp_code' => '123456')), 'directory+ok');
+	$check('… and nothing waited', $u->delays, 0);
+
+	// Security keys: their challenge follows a right password, so a key account keeps that order without a code.
+	$kb = new P();
+	$kb->config = $WA;
+	$kK = new SoftAuthenticator(-7);
+	$aK = $inscrire($kb, $kK);
+	$check('a key account, no code: the password first, then the key is asked for (2.28.0 order)', $login($kb, array()), 'directory+refused:TwoFactorCodeRequired');
+	$check('… a junk assertion passes this check, and login.success refuses it', $login($kb, array('webauthn_assertion' => '{}')), 'directory+refused:');
+	$deverrouiller($kb);
+	$check('… but a code typed on a key account is judged before the password', $login($kb, array('totp_code' => '000000')), $AUTH);
+	$check('… and its backup code passes', $login($kb, array('totp_code' => \explode(' ', $aK['BackupCodes'])[0])), 'directory+ok');
+	$kb->config = array();
+	$check('keys switched off by the administrator: a key account without a code no longer goes past', $login($kb, array()), $AUTH);
+
+	// The real wait: until the request has lasted precheck_delay seconds (and up to 0.5 s more).
+	$tw = new P();
+	$tw->realDelay = true;
+	$tw->config = array('precheck_delay' => 1);
+	$_SERVER['REQUEST_TIME_FLOAT'] = \microtime(true);
+	$tw->request(); $tw->params = array(); $tw->NoteLogin();
+	$cT = $tw->DoCreateTwoFactorSecret()['Result'];
+	$tw->params = array('Code' => $previous($cT['Secret'])); $tw->DoVerifyTwoFactorCode();
+	$tw->params = array('Enable' => '1'); $tw->DoEnableTwoFactor();
+	$_SERVER['REQUEST_TIME_FLOAT'] = \microtime(true);
+	$fT = \microtime(true);
+	$login($tw, array('totp_code' => '000000'));
+	$fW = \microtime(true) - $fT;
+	$check('the refusal waits precheck_delay (1 s here), at most half a second more', $fW >= 0.99 && $fW < 1.6, true);
+	$tw->config = array('precheck_delay' => 99);
+	$_SERVER['REQUEST_TIME_FLOAT'] = \microtime(true) - 20;
+	$fT = \microtime(true);
+	$login($tw, array('totp_code' => '000000'));
+	$check('… bounded to 10 s, counted from the start of the request', \microtime(true) - $fT < 0.1, true);
+
+	foreach (array($b, $u, $kb, $tw) as $x) { \is_dir($x->oStore->root) && \exec('rm -rf ' . \escapeshellarg($x->oStore->root)); }
 
 	foreach (array($d, $w, $e, $ap, $ar, $sm, $off) as $x) { \is_dir($x->oStore->root) && \exec('rm -rf ' . \escapeshellarg($x->oStore->root)); }
 

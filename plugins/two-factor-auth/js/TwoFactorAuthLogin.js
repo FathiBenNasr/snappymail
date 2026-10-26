@@ -98,6 +98,15 @@
 		} else {
 			wantKey = false;
 			e.detail?.error || (keyOptions = null, showKey(false));
+			// 2.30.0: the server judges the code before the password, and a
+			// login without the code is refused like a wrong password — saying
+			// "code required" there would tell anyone who has a second factor.
+			// The reminder is decided here, from the empty field alone, so it
+			// shows for every account and says nothing about this one.
+			const code = dom('input[name=totp_code]');
+			if (102 === e.detail?.error && loginView && code && !String(code.value || '').trim()) {
+				queueMicrotask(() => loginView.submitErrorAdditional(rl.i18n('PLUGIN_2FA/HINT_CODE_WITH_PASSWORD')));
+			}
 		}
 	});
 

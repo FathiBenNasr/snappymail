@@ -11,8 +11,8 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 {
 	const
 		NAME     = 'Two Factor Authentication',
-		VERSION  = '2.29.0',
-		RELEASE  = '2026-10-10',
+		VERSION  = '2.30.0',
+		RELEASE  = '2026-10-26',
 		REQUIRED = '2.36.0',
 		CATEGORY = 'Login',
 		DESCRIPTION = 'Provides support for TOTP 2FA and security keys / passkeys (WebAuthn) as a second factor',
@@ -64,6 +64,10 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 		$this->addJs('js/TwoFactorAuthSettings.js');
 
 		$this->addHook('login.success', 'DoLogin');
+		// 2.30.0: the code is judged BEFORE the password reaches the directory.
+		// login.credentials runs only inside a login; the filter.account that
+		// follows it carries the account the login is about.
+		$this->addHook('login.credentials', 'NoteLogin');
 		// login.success runs for the main account only: an additional account
 		// goes through filter.account alone, at setup and on every request.
 		$this->addHook('filter.account', 'FilterAccount');
@@ -113,6 +117,11 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 				->SetType(\RainLoop\Enumerations\PluginPropertyType::STRING_TEXT)
 				->SetDescription('The same, for the first segment of the address (?/Service/...). Json and Raw are then filtered action by action. Empty: ' . self::SETUP_ALLOWED_SERVICES . '.')
 				->SetDefaultValue(''),
+			\RainLoop\Plugins\Property::NewInstance("precheck_delay")
+				->SetLabel('Seconds a wrong code waits before it is refused')
+				->SetType(\RainLoop\Enumerations\PluginPropertyType::INT)
+				->SetDescription('The code is checked before the password. Its refusal must take as long as a wrong password, or the wait tells who has 2-Step Verification: Cyrus pauses failedloginpause (3 s by default) after a failed login. Between 0 and 10.')
+				->SetDefaultValue(3),
 			\RainLoop\Plugins\Property::NewInstance("otp_issuer")
 				->SetLabel('Service name shown in the authenticator')
 				->SetType(\RainLoop\Enumerations\PluginPropertyType::STRING)
@@ -399,6 +408,14 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 	 */
 	public function FilterAccount($oAccount)
 	{
+		// Spent by the first account filtered after login.credentials, whichever
+		// it is: an additional account's setup must not leave it for the next.
+		$bLoggingIn = $this->bLoggingIn;
+		$this->bLoggingIn = false;
+		if ($oAccount instanceof MainAccount) {
+			$bLoggingIn && $this->CheckBeforePassword($oAccount);
+			return;
+		}
 		if (!($oAccount instanceof \RainLoop\Model\AdditionalAccount)) {
 			return;
 		}
@@ -417,6 +434,124 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 		throw new ClientException(\RainLoop\Notifications::AuthError, null, self::NOT_ADDITIONAL);
 	}
 
+	/** Set by login.credentials, spent by the filter.account of the same login. */
+	private bool $bLoggingIn = false;
+	/** The address whose code CheckBeforePassword() accepted in this request. */
+	private string $sVerifiedBeforePassword = '';
+
+	public function NoteLogin(&$sEmail = '', &$sImapUser = '', &$sPassword = '', &$sSmtpUser = '') : void
+	{
+		$this->bLoggingIn = !($this->Manager()->Actions() instanceof \RainLoop\ActionsAdmin);
+	}
+
+	/**
+	 * The code, judged before the password is sent to IMAP — hence to the
+	 * directory (2.30.0, TODO §72 of the suite).
+	 *
+	 * Why: every wrong password sent to IMAP is a failure counted by the
+	 * directory's password policy, which slows and then locks the account.
+	 * Whoever knows only an address could lock its owner out. For an account
+	 * whose authenticator is on, a login without its right code now stops
+	 * here: nothing reaches the directory, nothing is counted, and the
+	 * password can no longer be guessed through the webmail.
+	 *
+	 * What this opens, and how it is closed:
+	 *  - Whether an account has a second factor must not show. The refusal is
+	 *    the core's own for a wrong password: AuthError, no additional message,
+	 *    the core's auth-log line (fail2ban), and the same duration
+	 *    (precheck_delay, Cyrus' failedloginpause).
+	 *  - A wrong code here is NOT counted toward the record's lockout: anyone
+	 *    may send one, and a lockout anyone can trigger is the weapon this
+	 *    removes. The limit is per IP (fail2ban). Each right code then lets
+	 *    one password through, once (the time step is spent): guessing the
+	 *    password now costs some 330 000 guessed codes per try.
+	 *  - A wrong code is judged without the lock and without writing: an
+	 *    attacker's attempts never hold the owner's record.
+	 *  - Security keys: their challenge is issued only after a right password
+	 *    (2.28.0). An account with keys therefore keeps that order when no
+	 *    code is typed — it keeps today's exposure, not less.
+	 *  - IMAP and SMTP clients are not covered: they reach the directory
+	 *    directly (app passwords and the slowdown of the policy guard them).
+	 */
+	public function CheckBeforePassword(MainAccount $oAccount) : void
+	{
+		$aRecord = $this->loadRecord($oAccount);
+		if (!$aRecord || !TwoFactorRecord::isOn($aRecord, $this->recordKey())) {
+			return;
+		}
+		$bKeys = $this->webAuthnConf() && TwoFactorRecord::passkeys($aRecord, $this->recordKey());
+		$sCode = \trim((string) $this->jsonParam('totp_code', ''));
+		if ('' !== \trim((string) $this->jsonParam('webauthn_assertion', '')) || '' === $sCode) {
+			// A key's assertion answers a challenge issued after the password:
+			// DoLogin judges it. Only an account that has a key may go that
+			// way — or any assertion, even junk, would carry a password past here.
+			if ($bKeys) {
+				return;
+			}
+			$sOutcome = 'missing';
+		} else {
+			$sOutcome = $this->checkCodeBeforePassword($oAccount, $sCode);
+		}
+		if ('ok' === $sOutcome) {
+			$this->sVerifiedBeforePassword = $oAccount->Email();
+			$this->Logger()->Write("TFA: Code verified for {$oAccount->Email()}, before the password");
+			return;
+		}
+		$this->Logger()->Write("TFA: {$sOutcome} for {$oAccount->Email()}, refused before the password");
+		$this->delayLikeAWrongPassword();
+		// The core's refusal of a wrong password, exactly: same code, no name.
+		throw new ClientException(\RainLoop\Notifications::AuthError);
+	}
+
+	/**
+	 * One code before the password: 'ok', or why not. A wrong one is judged on
+	 * the record as read, and nothing is written; a right one is judged again
+	 * under the lock and spent (time step or backup code) — the record read
+	 * once the lock is held decides, as in checkCode().
+	 */
+	protected function checkCodeBeforePassword(MainAccount $oAccount, string $sCode) : string
+	{
+		$fJudge = function (array $aRecord) use ($oAccount, $sCode) : array {
+			$oProvider = $this->TwoFactorAuthProvider($oAccount);
+			$bTotp = !empty($aRecord['Enable']);
+			return TwoFactorRecord::check($aRecord, $sCode, $this->recordKey(), \time(),
+				fn (string $sSecret, string $s) => $bTotp ? $oProvider->MatchingSlice($sSecret, $s) : null);
+		};
+		$aRecord = $this->loadRecord($oAccount);
+		if (!$aRecord) {
+			return 'wrong';
+		}
+		[$sOutcome] = $fJudge($aRecord);
+		if ('ok' !== $sOutcome) {
+			return $sOutcome;
+		}
+		return $this->underLock($oAccount, function () use ($oAccount, $fJudge) {
+			$aRecord = $this->loadRecord($oAccount);
+			if (!$aRecord) {
+				return 'wrong';
+			}
+			[$sOutcome, $aNew] = $fJudge($aRecord);
+			if ('ok' !== $sOutcome) {
+				// Spent by a parallel login meanwhile: a replay, not counted either.
+				return $sOutcome;
+			}
+			return $this->saveRecord($oAccount, $aNew) ? 'ok' : 'busy';
+		}) ?? 'busy';
+	}
+
+	/**
+	 * Waits until the request has lasted as long as a wrong password would:
+	 * precheck_delay seconds, and up to half a second more, at random.
+	 */
+	protected function delayLikeAWrongPassword() : void
+	{
+		$fDelay = \max(0, \min(10, (int) $this->Config()->Get('plugin', 'precheck_delay', 3)))
+			+ \random_int(0, 500) / 1000;
+		$fStart = (float) ($_SERVER['REQUEST_TIME_FLOAT'] ?? \microtime(true));
+		$fLeft = $fDelay - (\microtime(true) - $fStart);
+		0 < $fLeft && \usleep((int) ($fLeft * 1000000));
+	}
+
 	/**
 	 * The second factor of a login: a code (TOTP or backup), or — 2.28.0 — a
 	 * security key's assertion.
@@ -430,6 +565,11 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 	 */
 	public function DoLogin(MainAccount $oAccount)
 	{
+		if ('' !== $this->sVerifiedBeforePassword && $this->sVerifiedBeforePassword === $oAccount->Email()) {
+			// Already judged, and spent, before the password (2.30.0): judging
+			// it again here would call it a replay.
+			return;
+		}
 		$aRecord = $this->loadRecord($oAccount);
 		if (!$aRecord || !TwoFactorRecord::isOn($aRecord, $this->recordKey())) {
 			return;
