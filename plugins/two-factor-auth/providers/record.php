@@ -35,6 +35,10 @@ final class TwoFactorRecord
 	public const MAX_CHALLENGES = 8;
 	/** Login challenges already signed, kept until they expire (2.31.0). */
 	public const MAX_SPENT = 64;
+	/** How long freshly shown backup codes wait for their proof, in seconds (2.32.0). */
+	public const PENDING_TTL = 900;
+	/** Wrong proofs tolerated before the pending codes are discarded (2.32.0). */
+	public const PENDING_TRIES = 5;
 
 	/** A 32-byte key for this installation, derived from its salt. */
 	public static function key(string $sSalt) : string
@@ -123,6 +127,92 @@ final class TwoFactorRecord
 			'LockedUntil' => 0,
 			'Challenges' => array()
 		);
+	}
+
+	/* ---- backup codes held until their keeper proves it (2.32.0) ---- */
+
+	/**
+	 * New backup codes, and possibly a first security key, put aside until the
+	 * person retypes one of the codes (confirmPending). Nothing here counts as
+	 * a second factor and nothing here replaces what is active: a person who
+	 * never comes back to confirm is exactly where they were, not locked out.
+	 *
+	 * The code to retype is chosen by the server (its rank in the list), so it
+	 * cannot be answered by guessing the first one.
+	 *
+	 * @param string[] $aCodes the codes as shown
+	 * @param ?array $aKey the key to activate with them (an entry of the key list), or null
+	 */
+	public static function startPending(array $a, array $aCodes, ?array $aKey, string $sBinding, int $iNow, string $sKey) : array
+	{
+		$a['Pending'] = array(
+			'h' => \array_map(fn ($s) => self::hashCode((string) $s, $sKey), \array_values($aCodes)),
+			'kb' => null === $aKey ? '' : self::seal(\json_encode(array($aKey)), $sKey),
+			'ask' => \random_int(0, \max(0, \count($aCodes) - 1)),
+			'b' => self::hashCode($sBinding, $sKey),
+			'e' => $iNow + self::PENDING_TTL,
+			'n' => 0
+		);
+		return $a;
+	}
+
+	/** The pending codes if there are some and they have not expired, else null. */
+	public static function pending(array $a, int $iNow) : ?array
+	{
+		$p = $a['Pending'] ?? null;
+		return \is_array($p) && \is_array($p['h'] ?? null) && (int) ($p['e'] ?? 0) > $iNow ? $p : null;
+	}
+
+	public static function dropPending(array $a) : array
+	{
+		unset($a['Pending']);
+		return $a;
+	}
+
+	/**
+	 * The proof: one retyped code. `['ok', record]` with the codes (and the
+	 * key, if any) now active; otherwise `['none'|'binding'|'wrong', record]`.
+	 * A wrong answer counts; after PENDING_TRIES the codes are discarded and
+	 * the person starts again. The right code is not spent: it is one of the
+	 * codes now in force.
+	 *
+	 * Bound to the browser that asked, like the registration challenge: another
+	 * session of the same account cannot confirm what it never saw.
+	 */
+	public static function confirmPending(array $a, string $sCode, string $sBinding, int $iNow, string $sKey) : array
+	{
+		$p = self::pending($a, $iNow);
+		if (null === $p) {
+			return array('none', self::dropPending($a));
+		}
+		if ('' === $sBinding || !\hash_equals((string) ($p['b'] ?? ''), self::hashCode($sBinding, $sKey))) {
+			return array('binding', $a);
+		}
+		$sCode = \trim($sCode);
+		$iAsk = (int) ($p['ask'] ?? 0);
+		$bRight = \strlen($sCode) === self::BACKUP_DIGITS && \ctype_digit($sCode)
+			&& isset($p['h'][$iAsk])
+			&& \hash_equals((string) $p['h'][$iAsk], self::hashCode($sCode, $sKey));
+		if (!$bRight) {
+			$a['Pending']['n'] = (int) ($p['n'] ?? 0) + 1;
+			return array('wrong', $a['Pending']['n'] >= self::PENDING_TRIES ? self::dropPending($a) : $a);
+		}
+		if ('' !== (string) ($p['kb'] ?? '')) {
+			$sAdd = self::unseal((string) $p['kb'], $sKey);
+			$aAdd = null === $sAdd ? null : \json_decode($sAdd, true);
+			$aKeys = self::passkeys($a, $sKey);
+			if (!\is_array($aAdd) || !$aAdd || null === $aKeys) {
+				return array('none', self::dropPending($a));
+			}
+			$a = self::withPasskeys($a, \array_merge($aKeys, $aAdd), $sKey);
+			// A half-made authenticator enrolment next to a key is abandoned: its
+			// own codes are replaced by these, so it could not be finished.
+			if (empty($a['Enable'])) {
+				unset($a['SecretBox'], $a['Tested']);
+			}
+		}
+		$a['BackupHashes'] = \array_values($p['h']);
+		return array('ok', self::dropPending($a));
 	}
 
 	/* ---- security keys (WebAuthn, 2.28.0) ---- */

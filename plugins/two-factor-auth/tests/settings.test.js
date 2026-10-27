@@ -89,3 +89,85 @@ test('2.27.0: cleared again, the screen forces again; not required, nothing is f
 	b.appels[0].cb(0, { Result: { User: 'a@smail.tn', IsSet: false, Enable: false, Tested: false } });
 	assert.strictEqual(libre.SetupTwoFactor, false);
 });
+
+// 2.32.0: a key as the only second factor, and the proof that the backup codes are kept.
+const info = (o = {}) => Object.assign({ User: 'a@smail.tn', IsSet: false, Enable: false, Tested: false, On: false, Enrolled: false,
+	OnlyKey: false, Pending: false, PendingAsk: 0, PendingKey: false, BackupLeft: 0, WebAuthn: true, MaxPasskeys: 10, Passkeys: [] }, o);
+const reglagesAuth = { Auth: true };
+
+test('2.32.0: l\'avertissement suit la réponse du serveur : clé seule, puis plus rien', () => {
+	const { v } = vueAvecServeur(reglagesAuth);
+	v.applyInfo(info({ On: true, Enrolled: true, OnlyKey: true, BackupLeft: 8, Passkeys: [{ Ref: 'r', Name: 'k', Created: 0, LastUsed: 0 }] }));
+	assert.strictEqual(v.onlyKey(), true);
+	assert.strictEqual(v.backupLeft(), 8);
+	v.applyInfo(info({ On: true, Enrolled: true, Enable: true, OnlyKey: false, Passkeys: [{ Ref: 'r', Name: 'k', Created: 0, LastUsed: 0 }] }));
+	assert.strictEqual(v.onlyKey(), false);
+});
+
+test('2.32.0: codes en attente : le rang demandé est annoncé, jamais les codes', () => {
+	const { v } = vueAvecServeur(reglagesAuth);
+	v.applyInfo(info({ Pending: true, PendingKey: true, PendingAsk: 5 }));
+	assert.deepStrictEqual([v.pending(), v.pendingKey(), v.pendingAsk(), v.confirmLabel()], [true, true, 5, 'PLUGIN_2FA/LABEL_CONFIRM_CODE_N']);
+	v.confirmCode('123');
+	v.applyInfo(info());
+	assert.deepStrictEqual([v.pending(), v.confirmCode()], [false, '']);
+});
+
+test('2.32.0: « je les ai gardés » retire les codes de l\'écran', () => {
+	const { v } = vueAvecServeur(reglagesAuth);
+	v.viewBackupCodes('111111111  222222222');
+	v.savedCodes();
+	assert.strictEqual(v.viewBackupCodes(), '');
+});
+
+test('2.32.0: la preuve part au serveur, nettoyée ; vide, elle ne part pas', () => {
+	const { v, appels } = vueAvecServeur(reglagesAuth);
+	v.confirmCodes();
+	assert.strictEqual(appels.length, 0);
+	v.confirmCode('  123456789 ');
+	v.confirmCodes();
+	assert.deepStrictEqual([appels[0].action, JSON.stringify(appels[0].prm)], ['ConfirmBackupCodes', '{"Code":"123456789"}']);
+	v.confirmCodes();
+	assert.strictEqual(appels.length, 1, 'une seule requête à la fois');
+	appels[0].cb(0, { Result: info({ On: true, Enrolled: true, OnlyKey: true }) });
+	assert.deepStrictEqual([v.onlyKey(), v.confirmCode(), v.confirmError()], [true, '', '']);
+});
+
+test('2.32.0: preuve refusée : message, et l\'état est relu (trop d\'essais jettent les codes)', () => {
+	const { v, appels } = vueAvecServeur(reglagesAuth);
+	v.applyInfo(info({ Pending: true, PendingKey: true, PendingAsk: 2 }));
+	v.confirmCode('000000000');
+	v.confirmCodes();
+	appels[0].cb(0, { Result: false });
+	assert.strictEqual(v.confirmError(), 'PLUGIN_2FA/ERROR_CODE_NOT_CONFIRMED');
+	assert.strictEqual(appels[1].action, 'GetTwoFactorInfo');
+	appels[1].cb(0, { Result: info() });
+	assert.strictEqual(v.pending(), false);
+});
+
+test('2.32.0: annuler demande au serveur de jeter ce qui attend', () => {
+	const { v, appels } = vueAvecServeur(reglagesAuth);
+	v.viewBackupCodes('x');
+	v.cancelPending();
+	assert.deepStrictEqual([appels[0].action, v.viewBackupCodes()], ['CancelPendingCodes', '']);
+});
+
+test('2.32.0: régénérer passe par un facteur courant, montre les codes une fois', () => {
+	const { v, appels } = vueAvecServeur(reglagesAuth);
+	let prouve = null;
+	v.prove = action => { prouve = action; };
+	v.regenerateCodes();
+	let fini = null;
+	prouve({ Code: '654321' }, (e, d) => { fini = d; });
+	assert.deepStrictEqual([appels[0].action, JSON.stringify(appels[0].prm)], ['RegenerateBackupCodes', '{"Code":"654321"}']);
+	appels[0].cb(0, { Result: info({ On: true, Pending: true, PendingAsk: 3, BackupCodes: '111111111 222222222' }) });
+	assert.deepStrictEqual([v.viewBackupCodes(), fini.Result, v.pendingAsk()], ['111111111  222222222', true, 3]);
+});
+
+test('2.32.0: devant l\'écran de connexion (pas authentifié), rien n\'est demandé', () => {
+	const { v, appels } = vueAvecServeur({ Auth: false });
+	v.confirmCode('123456789');
+	v.confirmCodes();
+	v.regenerateCodes();
+	assert.strictEqual(appels.length, 0);
+});

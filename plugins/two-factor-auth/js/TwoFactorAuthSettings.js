@@ -93,6 +93,19 @@ class TwoFactorAuthSettings
 		this.passkeyBusy = ko.observable(false);
 		this.passkeyError = ko.observable('');
 
+		// 2.32.0: a key as the only second factor, and backup codes waiting for
+		// their proof. Set from the server's answers; the codes themselves live
+		// in viewBackupCodes and nowhere else.
+		this.onlyKey = ko.observable(false);
+		this.pending = ko.observable(false);
+		this.pendingKey = ko.observable(false);
+		this.pendingAsk = ko.observable(0);
+		this.backupLeft = ko.observable(0);
+		this.confirmCode = ko.observable('');
+		this.confirmError = ko.observable('');
+		this.confirmBusy = ko.observable(false);
+		this.confirmLabel = ko.observable('');
+
 		const fn = iError => iError && this.viewEnable_(false);
 		Object.entries({
 			viewEnable: {
@@ -143,7 +156,8 @@ class TwoFactorAuthSettings
 
 		this.onResult = this.onResult.bind(this);
 		this.onShowSecretResult = this.onShowSecretResult.bind(this);
-		['addPasskey', 'renamePasskey', 'savePasskey', 'removePasskey'].forEach(m => this[m] = this[m].bind(this));
+		['addPasskey', 'renamePasskey', 'savePasskey', 'removePasskey',
+			'savedCodes', 'confirmCodes', 'cancelPending', 'regenerateCodes', 'addAuthenticator'].forEach(m => this[m] = this[m].bind(this));
 	}
 
 	/**
@@ -222,6 +236,13 @@ class TwoFactorAuthSettings
 		})));
 		this.hasPasskeys(info.Passkeys.length > 0);
 		this.secondFactorOn(!!info.On);
+		this.onlyKey(!!info.OnlyKey);
+		this.pending(!!info.Pending);
+		this.pendingKey(!!info.PendingKey);
+		this.pendingAsk(info.PendingAsk | 0);
+		this.backupLeft(info.BackupLeft | 0);
+		this.confirmLabel(rl.i18n('PLUGIN_2FA/LABEL_CONFIRM_CODE_N').replace('{n}', String(info.PendingAsk | 0)));
+		info.Pending || (this.confirmCode(''), this.confirmError(''));
 		this.webauthn(!!info.WebAuthn);
 		this.maxPasskeys(info.MaxPasskeys | 0);
 		this.canAddPasskey(!!info.WebAuthn && info.Passkeys.length < (info.MaxPasskeys | 0));
@@ -270,6 +291,61 @@ class TwoFactorAuthSettings
 				register(proofOf(proof));
 			})
 			: register({});
+	}
+
+	/* ---- backup codes kept and proven (2.32.0) ---- */
+
+	/** "I have saved them": the codes leave the screen, the proof is asked. */
+	savedCodes() {
+		this.viewBackupCodes('');
+		this.confirmCode('');
+		this.confirmError('');
+	}
+
+	/** One of the codes just shown, retyped; the server says which and judges it. */
+	confirmCodes() {
+		if (!authentifie() || this.confirmBusy() || !String(this.confirmCode()).trim()) {
+			return;
+		}
+		this.confirmBusy(true);
+		this.confirmError('');
+		rl.pluginRemoteRequest((iError, oData) => {
+			this.confirmBusy(false);
+			if (!iError && oData?.Result) {
+				this.confirmCode('');
+				this.applyInfo(oData.Result);
+				return;
+			}
+			this.confirmError(rl.i18n('PLUGIN_2FA/ERROR_CODE_NOT_CONFIRMED'));
+			// Too many wrong answers drop the codes: read what is left.
+			rl.pluginRemoteRequest((iError, oData) => !iError && oData?.Result && this.applyInfo(oData.Result), 'GetTwoFactorInfo');
+		}, 'ConfirmBackupCodes', { Code: String(this.confirmCode()).trim() });
+	}
+
+	/** Drops the codes (and the key) put aside, to start again; what is active is untouched. */
+	cancelPending() {
+		this.viewBackupCodes('');
+		rl.pluginRemoteRequest((iError, oData) => !iError && oData?.Result && this.applyInfo(oData.Result), 'CancelPendingCodes');
+	}
+
+	/** New codes, asked with a current factor; the old ones hold until the new are proven. */
+	regenerateCodes() {
+		if (!authentifie()) {
+			return;
+		}
+		this.prove((proof, done) => rl.pluginRemoteRequest((iError, oData) => {
+			const ok = !iError && !!oData?.Result;
+			if (ok) {
+				this.applyInfo(oData.Result);
+				this.viewBackupCodes(pString(oData.Result.BackupCodes).replace(/[\s]+/g, '  '));
+			}
+			done(ok ? 0 : (iError || 1), { Result: ok });
+		}, 'RegenerateBackupCodes', proofOf(proof)));
+	}
+
+	/** From the warning: the same path as the authenticator button of this screen. */
+	addAuthenticator() {
+		this.createTwoFactor();
 	}
 
 	renamePasskey(row) {

@@ -153,5 +153,39 @@ for ($i = 0; $i < 20; ++$i) { $aMany = TwoFactorRecord::addChallenge($aMany, "c$
 check('at most ' . TwoFactorRecord::MAX_CHALLENGES . ' pending, the newest kept', array(\count($aMany['Challenges']), \end($aMany['Challenges'])['c']), array(TwoFactorRecord::MAX_CHALLENGES, 'c19'));
 check('expired ones are dropped when a new one comes', \count(TwoFactorRecord::addChallenge($aMany, 'n', 'login', 'b', 5000, 300, $sKeyR)['Challenges']), 1);
 
+/* ---- 2.32.0: codes held until their keeper proves it ---- */
+$aCodesP = TwoFactorRecord::newBackupCodes();
+$aOld = TwoFactorRecord::create('u@x', 'SECRET', array('111111111'), $sKeyR);
+$aKey = array('Id' => 'abc', 'Alg' => -7, 'Key' => 'k', 'SignCount' => 0);
+$aP = TwoFactorRecord::startPending(TwoFactorRecord::blank('u@x'), $aCodesP, $aKey, 'browser-1', 1000, $sKeyR);
+check('pending: nothing active, the codes only as hashes, the key sealed',
+	array(TwoFactorRecord::isOn($aP, $sKeyR), \str_contains(\json_encode($aP), $aCodesP[0]), \str_contains(\json_encode($aP), 'abc'), \count($aP['Pending']['h'])), array(false, false, false, 8));
+check('pending: valid for 15 minutes, then not', array(null !== TwoFactorRecord::pending($aP, 1000 + 899), null !== TwoFactorRecord::pending($aP, 1000 + 900)), array(true, false));
+$iAsk = $aP['Pending']['ask'];
+[$sO, $aR] = TwoFactorRecord::confirmPending($aP, $aCodesP[$iAsk], 'browser-1', 1100, $sKeyR);
+check('confirm with the asked code: ok, key and codes in force, pending gone',
+	array($sO, TwoFactorRecord::isOn($aR, $sKeyR), \count($aR['BackupHashes']), isset($aR['Pending']), TwoFactorRecord::passkeys($aR, $sKeyR)[0]['Id']), array('ok', true, 8, false, 'abc'));
+check('the asked code is not spent', TwoFactorRecord::spendBackupCode($aR, $aCodesP[$iAsk], $sKeyR) !== null, true);
+$sOther = $aCodesP[($iAsk + 1) % 8];
+check('another code of the list: wrong, counted', array(TwoFactorRecord::confirmPending($aP, $sOther, 'browser-1', 1100, $sKeyR)[0], TwoFactorRecord::confirmPending($aP, $sOther, 'browser-1', 1100, $sKeyR)[1]['Pending']['n']), array('wrong', 1));
+check('another browser: refused, not counted', array(TwoFactorRecord::confirmPending($aP, $aCodesP[$iAsk], 'browser-2', 1100, $sKeyR)[0], TwoFactorRecord::confirmPending($aP, $aCodesP[$iAsk], 'browser-2', 1100, $sKeyR)[1]['Pending']['n']), array('binding', 0));
+check('no browser token at all: refused', TwoFactorRecord::confirmPending($aP, $aCodesP[$iAsk], '', 1100, $sKeyR)[0], 'binding');
+check('expired: no proof', TwoFactorRecord::confirmPending($aP, $aCodesP[$iAsk], 'browser-1', 2000, $sKeyR)[0], 'none');
+$aT = $aP;
+for ($i = 0; $i < TwoFactorRecord::PENDING_TRIES; ++$i) { [$sO, $aT] = TwoFactorRecord::confirmPending($aT, '000000000', 'browser-1', 1100, $sKeyR); }
+check('the fifth wrong proof discards the codes and the key', array($sO, isset($aT['Pending']), TwoFactorRecord::isOn($aT, $sKeyR)), array('wrong', false, false));
+foreach (array('', 'abcdefghi', '12345678', '1234567890', "12345678\n") as $sBad) {
+	check('hostile proof ' . \json_encode($sBad), TwoFactorRecord::confirmPending($aP, $sBad, 'browser-1', 1100, $sKeyR)[0], 'wrong');
+}
+$aRg = TwoFactorRecord::startPending($aOld, $aCodesP, null, 'browser-1', 1000, $sKeyR);
+check('regeneration: the old codes hold until the proof', TwoFactorRecord::spendBackupCode($aRg, '111111111', $sKeyR) !== null, true);
+[$sO, $aRg2] = TwoFactorRecord::confirmPending($aRg, $aCodesP[$aRg['Pending']['ask']], 'browser-1', 1100, $sKeyR);
+check('regeneration confirmed: the old codes are gone, the new are in force, the authenticator untouched',
+	array($sO, TwoFactorRecord::spendBackupCode($aRg2, '111111111', $sKeyR), \count($aRg2['BackupHashes']), isset($aRg2['SecretBox'])), array('ok', null, 8, true));
+$aTamper = $aP; $aTamper['Pending']['kb'] = 'garbage';
+check('a tampered key box cannot be confirmed into the account', array(TwoFactorRecord::confirmPending($aTamper, $aCodesP[$iAsk], 'browser-1', 1100, $sKeyR)[0], TwoFactorRecord::isOn(TwoFactorRecord::confirmPending($aTamper, $aCodesP[$iAsk], 'browser-1', 1100, $sKeyR)[1], $sKeyR)), array('none', false));
+$aTamper2 = $aP; $aTamper2['Pending']['ask'] = 99;
+check('a rank out of the list matches nothing', TwoFactorRecord::confirmPending($aTamper2, $aCodesP[0], 'browser-1', 1100, $sKeyR)[0], 'wrong');
+
 echo "\n", $iFail ? "$iFail failed\n" : "0 failed\n";
 exit($iFail ? 1 : 0);

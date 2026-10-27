@@ -1,6 +1,15 @@
 <div class="b-settings-two-factor form-horizontal">
 	<div class="legend" data-i18n="PLUGIN_2FA/LEGEND_TWO_FACTOR_AUTH"></div>
 	<p class="muted" data-bind="visible: appPasswordsNote" data-i18n="PLUGIN_2FA/APP_PASSWORDS_NOTE"></p>
+	<!-- 2.32.0: permanent while a security key is the only second factor. -->
+	<div class="alert alert-warning twofactor-only-key" data-bind="visible: onlyKey() && !pending()">
+		<strong data-i18n="PLUGIN_2FA/WARN_KEY_ONLY_TITLE"></strong>
+		<p data-i18n="PLUGIN_2FA/WARN_KEY_ONLY"></p>
+		<a class="btn twofactor-add-authenticator" data-bind="click: addAuthenticator">
+			<i class="fontastic">⏱</i>
+			<span data-i18n="PLUGIN_2FA/BUTTON_ADD_AUTHENTICATOR"></span>
+		</a>
+	</div>
 	<div class="form-horizontal">
 		<div class="control-group" data-bind="visible: twoFactorStatus">
 			<div class="controls">
@@ -62,6 +71,39 @@
 				<blockquote>
 					<p class="muted width100-on-mobile" style="width: 550px" data-i18n="PLUGIN_2FA/TWO_FACTOR_BACKUP_CODES_DESC"></p>
 				</blockquote>
+				<div data-bind="visible: pending">
+					<p class="muted width100-on-mobile" style="width: 550px" data-i18n="PLUGIN_2FA/CODES_PENDING_DESC"></p>
+					<a class="btn btn-primary twofactor-codes-saved" data-bind="click: savedCodes" data-i18n="PLUGIN_2FA/BUTTON_CODES_SAVED"></a>
+				</div>
+			</div>
+		</div>
+		<!-- 2.32.0: the proof that the codes are kept. -->
+		<div class="control-group twofactor-pending" data-bind="visible: pending() && '' === viewBackupCodes()">
+			<label class="control-label">
+				<span data-i18n="PLUGIN_2FA/LABEL_BACKUP_CODES_PROOF"></span>
+			</label>
+			<div class="controls" style="padding-top: 5px;">
+				<p class="muted width100-on-mobile" style="width: 550px" data-bind="visible: pendingKey" data-i18n="PLUGIN_2FA/NOTE_KEY_SOLE_FACTOR"></p>
+				<p class="muted width100-on-mobile" style="width: 550px" data-bind="visible: pendingKey" data-i18n="PLUGIN_2FA/PENDING_KEY_NOT_ACTIVE"></p>
+				<p class="muted width100-on-mobile" style="width: 550px" data-bind="visible: !pendingKey()" data-i18n="PLUGIN_2FA/PENDING_OLD_CODES_VALID"></p>
+				<label for="twofactor-confirm-code" data-bind="text: confirmLabel"></label>
+				<input id="twofactor-confirm-code" type="text" class="uiInput twofactor-confirm-code" inputmode="numeric" pattern="[0-9]*"
+					autocomplete="off" maxlength="9" dir="ltr" style="unicode-bidi: plaintext"
+					data-bind="textInput: confirmCode, disable: confirmBusy, onEnter: confirmCodes">
+				<div class="alert" data-bind="visible: confirmError, text: confirmError"></div>
+				<a class="btn btn-primary twofactor-confirm" data-bind="click: confirmCodes, css: {disabled: confirmBusy}" data-i18n="PLUGIN_2FA/BUTTON_CONFIRM_CODES"></a>
+				<a class="btn twofactor-cancel-codes" data-bind="click: cancelPending" data-i18n="PLUGIN_2FA/BUTTON_CANCEL_CODES"></a>
+			</div>
+		</div>
+		<div class="control-group" data-bind="visible: secondFactorOn() && !pending()">
+			<label class="control-label">
+				<span data-i18n="PLUGIN_2FA/LABEL_TWO_FACTOR_BACKUP_CODES"></span>
+			</label>
+			<div class="controls" style="padding-top: 5px;">
+				<span class="muted"><span data-i18n="PLUGIN_2FA/LABEL_BACKUP_LEFT"></span>: <strong data-bind="text: backupLeft"></strong></span>
+				&nbsp;&nbsp;
+				<a class="btn twofactor-regenerate" data-bind="click: regenerateCodes" data-i18n="PLUGIN_2FA/BUTTON_REGENERATE_CODES"></a>
+				<p class="muted width100-on-mobile" style="width: 550px" data-i18n="PLUGIN_2FA/REGENERATE_DESC"></p>
 			</div>
 		</div>
 	</div>
@@ -107,6 +149,7 @@
 				</tr>
 			</tbody>
 		</table>
+		<p class="muted twofactor-sole-note" data-bind="visible: canAddPasskey() && !secondFactorOn() && !pending()" data-i18n="PLUGIN_2FA/NOTE_KEY_SOLE_FACTOR"></p>
 		<div class="control-group" data-bind="visible: canAddPasskey">
 			<!-- dir="auto" on an EMPTY field is ltr: the Arabic placeholder came out
 			     word-reversed around « YubiKey ». Empty, the field takes the page's

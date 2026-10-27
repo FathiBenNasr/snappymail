@@ -11,7 +11,7 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 {
 	const
 		NAME     = 'Two Factor Authentication',
-		VERSION  = '2.31.0',
+		VERSION  = '2.32.0',
 		RELEASE  = '2026-10-26',
 		REQUIRED = '2.36.0',
 		CATEGORY = 'Login',
@@ -43,7 +43,7 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 		 */
 		SETUP_ALLOWED_ACTIONS = 'DoFolders DoLogout DoPluginGetTwoFactorInfo DoPluginCreateTwoFactorSecret'
 			. ' DoPluginShowTwoFactorSecret DoPluginVerifyTwoFactorCode DoPluginEnableTwoFactor DoPluginClearTwoFactorInfo'
-			. ' DoPluginWebAuthnCreateOptions DoPluginWebAuthnRegister',
+			. ' DoPluginWebAuthnCreateOptions DoPluginWebAuthnRegister DoPluginConfirmBackupCodes DoPluginCancelPendingCodes',
 		/**
 		 * The services (first segment of ?/<Service>/...) such an account may
 		 * reach. Measured: AppData, Plugins, Json. Css and Lang serve code,
@@ -92,6 +92,10 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 		$this->addJsonHook('WebAuthnLoginOptions', 'DoWebAuthnLoginOptions');
 		$this->addJsonHook('WebAuthnRename', 'DoWebAuthnRename');
 		$this->addJsonHook('WebAuthnRemove', 'DoWebAuthnRemove');
+		// 2.32.0: the proof that the backup codes are kept, and new codes.
+		$this->addJsonHook('ConfirmBackupCodes', 'DoConfirmBackupCodes');
+		$this->addJsonHook('CancelPendingCodes', 'DoCancelPendingCodes');
+		$this->addJsonHook('RegenerateBackupCodes', 'DoRegenerateBackupCodes');
 
 		$this->addTemplate('templates/TwoFactorAuthSettings.html');
 		$this->addTemplate('templates/PopupsTwoFactorAuthTest.html');
@@ -1387,6 +1391,17 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 				'Created' => $iNow,
 				'LastUsed' => 0
 			);
+			if (!$bWasOn) {
+				// 2.32.0: the first factor of an account is a key and nothing else.
+				// It is put aside with fresh backup codes and becomes active only
+				// when the person retypes one of them (DoConfirmBackupCodes): a key
+				// that cannot be used on another device must not be the only way in
+				// unless the way out has been kept. Until then nothing changes for
+				// the login, and a person who stops here is not locked out.
+				$aCodes = TwoFactorRecord::newBackupCodes();
+				return $this->saveRecord($oAccount, TwoFactorRecord::startPending($aRecord, $aCodes, $aKeys[\count($aKeys) - 1],
+					$sBinding, $iNow, $sKey)) ? 'pending' : 'busy';
+			}
 			// Required before the second factor is on (S-09), as for the TOTP.
 			if (!$bWasOn && !$this->appPasswordsRequired($oAccount, true)) {
 				$this->saveRecord($oAccount, $aRecord);
@@ -1406,13 +1421,97 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 			return 'ok';
 		}) ?? 'busy';
 		$this->Logger()->Write("TFA: security key registration {$sOutcome} for {$oAccount->Email()}");
-		if ('ok' !== $sOutcome) {
+		if ('ok' !== $sOutcome && 'pending' !== $sOutcome) {
 			return $this->jsonResponse(__FUNCTION__, false);
 		}
-		$bWasOn || $this->forgetRememberedDevices($oAccount);
+		'ok' === $sOutcome && !$bWasOn && $this->forgetRememberedDevices($oAccount);
 		$aInfo = $this->getTwoFactorInfo($oAccount, true);
 		// The only time these backup codes are shown.
 		$aCodes && $aInfo['BackupCodes'] = \implode(' ', $aCodes);
+		return $this->jsonResponse(__FUNCTION__, $aInfo);
+	}
+
+	/**
+	 * The proof that the backup codes are kept (2.32.0): one of them, retyped
+	 * (the server says which, by rank). Right: the codes — and the key put
+	 * aside with them, if any — take effect. The session is enough, because the
+	 * pending state weakens nothing and the codes were shown to this browser
+	 * only (bound to its connection token).
+	 */
+	public function DoConfirmBackupCodes() : array
+	{
+		$oAccount = $this->getMainAccountFromToken();
+		$sBinding = $this->sessionBinding();
+		$sKey = $this->recordKey();
+		$bTurnsOn = false;
+		$sOutcome = $this->underLock($oAccount, function () use ($oAccount, $sBinding, $sKey, &$bTurnsOn) {
+			$aRecord = $this->loadRecord($oAccount);
+			if (!$aRecord) {
+				return 'none';
+			}
+			$mCode = $this->jsonParam('Code', '');
+			// Anything but a string is a wrong answer, not a notice.
+			[$sOutcome, $aNext] = TwoFactorRecord::confirmPending($aRecord, \is_string($mCode) ? $mCode : '', $sBinding, \time(), $sKey);
+			if ('ok' === $sOutcome) {
+				$bTurnsOn = !TwoFactorRecord::isOn($aRecord, $sKey) && TwoFactorRecord::isOn($aNext, $sKey);
+				// Required before the second factor is on (S-09), as for the TOTP.
+				if ($bTurnsOn && !$this->appPasswordsRequired($oAccount, true)) {
+					return 'app-passwords';
+				}
+			}
+			if ('binding' !== $sOutcome && !$this->saveRecord($oAccount, $aNext)) {
+				$bTurnsOn && $this->appPasswordsRequired($oAccount, false);
+				return 'busy';
+			}
+			return $sOutcome;
+		}) ?? 'busy';
+		$this->Logger()->Write("TFA: backup codes confirmation {$sOutcome} for {$oAccount->Email()}");
+		if ('ok' !== $sOutcome) {
+			return $this->jsonResponse(__FUNCTION__, false);
+		}
+		$bTurnsOn && $this->forgetRememberedDevices($oAccount);
+		return $this->jsonResponse(__FUNCTION__, $this->getTwoFactorInfo($oAccount, true));
+	}
+
+	/** Drops the codes (and the key) put aside, to start again: nothing active is touched. */
+	public function DoCancelPendingCodes() : array
+	{
+		$oAccount = $this->getMainAccountFromToken();
+		$bDone = $this->underLock($oAccount, function () use ($oAccount) {
+			$aRecord = $this->loadRecord($oAccount);
+			return !$aRecord || !isset($aRecord['Pending']) || $this->saveRecord($oAccount, TwoFactorRecord::dropPending($aRecord));
+		});
+		return $this->jsonResponse(__FUNCTION__, $bDone ? $this->getTwoFactorInfo($oAccount, true) : false);
+	}
+
+	/**
+	 * New backup codes (2.32.0). Asks for a current second factor, code or key,
+	 * like everything that touches the second factor. The old codes stay valid
+	 * until the new ones are confirmed by retyping one: shown and never kept,
+	 * they would otherwise replace working codes with lost ones.
+	 */
+	public function DoRegenerateBackupCodes() : array
+	{
+		$oAccount = $this->getMainAccountFromToken();
+		$sBinding = $this->sessionBinding();
+		$aRecord = $this->loadRecord($oAccount);
+		$sKey = $this->recordKey();
+		if (!$aRecord || '' === $sBinding || !TwoFactorRecord::isOn($aRecord, $sKey)
+			|| 'ok' !== $this->proveSecondFactor($oAccount)) {
+			return $this->jsonResponse(__FUNCTION__, false);
+		}
+		$aCodes = TwoFactorRecord::newBackupCodes();
+		$bSaved = $this->underLock($oAccount, function () use ($oAccount, $aCodes, $sBinding, $sKey) {
+			$aRecord = $this->loadRecord($oAccount);
+			return $aRecord && $this->saveRecord($oAccount, TwoFactorRecord::startPending($aRecord, $aCodes, null, $sBinding, \time(), $sKey));
+		});
+		$this->Logger()->Write('TFA: new backup codes ' . ($bSaved ? 'issued, to be confirmed' : 'not issued') . " for {$oAccount->Email()}");
+		if (!$bSaved) {
+			return $this->jsonResponse(__FUNCTION__, false);
+		}
+		$aInfo = $this->getTwoFactorInfo($oAccount, true);
+		// The only time these are shown.
+		$aInfo['BackupCodes'] = \implode(' ', $aCodes);
 		return $this->jsonResponse(__FUNCTION__, $aInfo);
 	}
 
@@ -1636,6 +1735,7 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 		$aRecord = $this->loadRecord($oAccount);
 		$aConf = $this->webAuthnConf();
 		$aKeys = $aRecord ? (TwoFactorRecord::passkeys($aRecord, $this->recordKey()) ?? array()) : array();
+		$aPending = $aRecord ? TwoFactorRecord::pending($aRecord, \time()) : null;
 		return array(
 			'User' => $oAccount->Email(),
 			'IsSet' => $aRecord && !empty($aRecord['SecretBox']),
@@ -1644,6 +1744,15 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 			// 2.28.0: the second factor of the account, whichever it is.
 			'On' => $aRecord && TwoFactorRecord::isOn($aRecord, $this->recordKey()),
 			'Enrolled' => $aRecord && TwoFactorRecord::hasFactor($aRecord, $this->recordKey()),
+			// 2.32.0: a key is the only second factor — without an authenticator
+			// app, only the backup codes open the account if the key is not at hand.
+			'OnlyKey' => $aRecord && empty($aRecord['Enable']) && \count($aKeys) > 0,
+			// Codes shown and waiting for their proof: which rank to retype, and
+			// whether a first key waits with them. Never the codes.
+			'Pending' => null !== $aPending,
+			'PendingAsk' => $aPending ? ((int) ($aPending['ask'] ?? 0)) + 1 : 0,
+			'PendingKey' => $aPending ? '' !== (string) ($aPending['kb'] ?? '') : false,
+			'BackupLeft' => $aRecord ? \count((array) ($aRecord['BackupHashes'] ?? array())) : 0,
 			'WebAuthn' => null !== $aConf,
 			'MaxPasskeys' => $aConf ? $aConf['max'] : 0,
 			'Passkeys' => \array_map(fn ($k) => array(

@@ -133,7 +133,9 @@ const echecsAnnuaire = async etape => {
 			const r = await connexion(mdp, code);
 			verifier(!r.ok && 102 === r.code && '' === r.nom, quoi + ' : refusé comme un mot de passe faux (code ' + r.code + ', nom « ' + r.nom + ' »)');
 			verifier(r.duree >= 2.9, quoi + ' : aussi long qu’un mot de passe faux chez Cyrus (' + r.duree.toFixed(1) + ' s)');
-			verifier(vide === /deux étapes|2-Step/i.test(r.ecran), quoi + ' : le rappel du code ' + (vide ? 'est affiché' : 'n’est pas affiché') + ' — « ' + r.ecran.slice(0, 120) + ' »');
+			// 2.32.0: the reminder (code, backup code or key) follows every refusal, code typed or not:
+			// the same text whatever the cause, so it says nothing of the account.
+			verifier(/deux étapes|2-Step/i.test(r.ecran) && /secours|backup/i.test(r.ecran), quoi + ' : le rappel du code, avec le code de secours, est affiché — « ' + r.ecran.slice(0, 120) + ' »');
 			if (vide && CAPTURES) {
 				const el = await p.$('#V-Login form, .b-login-content');
 				await (el || p).screenshot({ path: CAPTURES + '/avant-1-rappel.png' });

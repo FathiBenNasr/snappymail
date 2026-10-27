@@ -57,7 +57,8 @@ namespace RainLoop\Plugins {
 		public function UseLangs($b) : void {}
 		public function addJs($f) : void {}
 		public function addHook($a, $b) : void {}
-		public function addJsonHook($a, $b) : void {}
+		public array $jsonHooks = array();
+		public function addJsonHook($a, $b) : void { $this->jsonHooks[$a] = $b; }
 		public function addPartHook($a, $b) : void {}
 		public function addTemplate($f) : void {}
 		public function jsonParam(string $k, $d = null) { return $this->params[$k] ?? $d; }
@@ -160,7 +161,7 @@ namespace {
 		array(\strlen($sSecret) >= 16, \str_starts_with($c['QRCode'], 'data:image/svg+xml;base64,'), \count(\explode(' ', $c['BackupCodes']))), array(true, true, 8));
 	$check('the stored record holds neither', \str_contains(\reset($p->oStore->data), $sSecret), false);
 	$aInfo = $p->DoGetTwoFactorInfo()['Result'];
-	$check('the info screen never sees secret, codes or QR', \array_keys($aInfo), array('User', 'IsSet', 'Enable', 'Tested', 'On', 'Enrolled', 'WebAuthn', 'MaxPasskeys', 'Passkeys'));
+	$check('the info screen never sees secret, codes or QR', \array_keys($aInfo), array('User', 'IsSet', 'Enable', 'Tested', 'On', 'Enrolled', 'OnlyKey', 'Pending', 'PendingAsk', 'PendingKey', 'BackupLeft', 'WebAuthn', 'MaxPasskeys', 'Passkeys'));
 	$check('… nor anything secret-shaped in its values', \preg_match('/' . \preg_quote($sSecret, '/') . '|BackupHashes|SecretBox/', \json_encode($aInfo)), 0);
 
 	$p->params = array('Enable' => '1');
@@ -429,7 +430,16 @@ namespace {
 		$aOpt = $x->DoWebAuthnCreateOptions()['Result'];
 		if (!$aOpt) { return 'no options'; }
 		$x->params = $aProof + array('Name' => $o['name'] ?? 'YubiKey', 'Credential' => \json_encode($k->create($aOpt['challenge'], $o)));
-		return $x->DoWebAuthnRegister()['Result'];
+		$aR = $x->DoWebAuthnRegister()['Result'];
+		// 2.32.0: a first key waits for the proof that the backup codes are kept.
+		// The helper gives it, as a careful person would, unless asked not to.
+		if (\is_array($aR) && !empty($aR['Pending']) && !empty($aR['PendingKey']) && empty($o['sans_preuve'])) {
+			$aCodes = \explode(' ', $aR['BackupCodes']);
+			$x->params = array('Code' => $aCodes[$aR['PendingAsk'] - 1]);
+			$aC = $x->DoConfirmBackupCodes()['Result'];
+			return \is_array($aC) ? $aC + array('BackupCodes' => $aR['BackupCodes']) : $aC;
+		}
+		return $aR;
 	};
 	$connexion = function (P $x, array $aParams) : string {
 		$x->params = $aParams;
@@ -483,7 +493,18 @@ namespace {
 	$check('creation options: ES256, EdDSA and RS256 offered', \array_column($aOpt['pubKeyCredParams'], 'alg'), array(-7, -8, -257));
 	$check('creation options: the user handle is random, never the address', array($aOpt['user']['name'], \str_contains(TwoFactorWebAuthn::unb64u($aOpt['user']['id']), 'rym')), array('rym@smail.tn', false));
 	$w->params = array('Name' => 'YubiKey bleue', 'Credential' => \json_encode($kW->create($aOpt['challenge'])));
-	$aR = $w->DoWebAuthnRegister()['Result'];
+	$aR0 = $w->DoWebAuthnRegister()['Result'];
+	$check('2.32.0: a first key is put aside, not active: backup codes shown once, a rank to retype',
+		array($aR0['On'], $aR0['Enrolled'], $aR0['Pending'], $aR0['PendingKey'], \count($aR0['Passkeys']), \count(\explode(' ', $aR0['BackupCodes'])), $aR0['PendingAsk'] >= 1 && $aR0['PendingAsk'] <= 8),
+		array(false, false, true, true, 0, 8, true));
+	$check('2.32.0: … and the login still ignores it (the password alone, nothing is locked)', $connexion($w, array()), 'ok');
+	$w->params = array('Code' => '000000000');
+	$check('2.32.0: a wrong proof is refused', $w->DoConfirmBackupCodes()['Result'], false);
+	$w->params = array('Code' => \explode(' ', $aR0['BackupCodes'])[$aR0['PendingAsk'] % 8]);
+	$check('2.32.0: another code of the list than the one asked is refused too', $w->DoConfirmBackupCodes()['Result'], false);
+	$w->params = array('Code' => \explode(' ', $aR0['BackupCodes'])[$aR0['PendingAsk'] - 1]);
+	$aR = $w->DoConfirmBackupCodes()['Result'];
+	$aR['BackupCodes'] = $aR0['BackupCodes'];
 	$check('registered: the second factor is on, with this key', array($aR['On'], $aR['Enrolled'], \count($aR['Passkeys']), $aR['Passkeys'][0]['Name']), array(true, true, 1, 'YubiKey bleue'));
 	$check('registered first: eight backup codes, shown this once', \count(\explode(' ', $aR['BackupCodes'] ?? '')), 8);
 	$aBackupW = \explode(' ', $aR['BackupCodes']);
@@ -829,6 +850,110 @@ namespace {
 	$fT = \microtime(true);
 	$login($tw, array('totp_code' => '000000'));
 	$check('… bounded to 10 s, counted from the start of the request', \microtime(true) - $fT < 0.1, true);
+
+
+	// A Do* method nobody registered is dead code for the browser: every action is hooked, under its own name.
+	$hk = new P(); $hk->Init();
+	$aDo = \array_values(\array_filter(\array_map(fn ($m) => $m->name, (new \ReflectionClass(TwoFactorAuthPlugin::class))->getMethods(\ReflectionMethod::IS_PUBLIC)),
+		fn ($n) => \str_starts_with($n, 'Do') && !\in_array($n, array('DoLogin'), true)));
+	$check('every public action of the plugin is registered as a JSON hook', \array_values(\array_diff($aDo, $hk->jsonHooks)), array());
+	$check('the three actions of 2.32.0 are hooked under the names the screen calls',
+		array($hk->jsonHooks['ConfirmBackupCodes'] ?? '', $hk->jsonHooks['CancelPendingCodes'] ?? '', $hk->jsonHooks['RegenerateBackupCodes'] ?? ''),
+		array('DoConfirmBackupCodes', 'DoCancelPendingCodes', 'DoRegenerateBackupCodes'));
+
+	/* ---- 2.32.0: a key as the only second factor is not active until its backup codes are proven kept ---- */
+	$registre = function (P $x, SoftAuthenticator $k, array $o = array()) use ($inscrire) { return $inscrire($x, $k, array(), $o + array('sans_preuve' => true)); };
+	$confirmer = function (P $x, string $sCode) { $x->params = array('Code' => $sCode); return $x->DoConfirmBackupCodes()['Result']; };
+
+	$v = new P();
+	$v->config = $WA;
+	$kV = new SoftAuthenticator(-7);
+	$aV = $registre($v, $kV);
+	$aVCodes = \explode(' ', $aV['BackupCodes']);
+	$iAsk = $aV['PendingAsk'] - 1;
+	$check('2.32.0: the info says what waits, never the codes', array(\array_key_exists('BackupCodes', $v->DoGetTwoFactorInfo()['Result']), $v->DoGetTwoFactorInfo()['Result']['Pending'], $v->DoGetTwoFactorInfo()['Result']['PendingAsk']), array(false, true, $aV['PendingAsk']));
+	$sRawV = $v->oStore->data['rym@smail.tn'];
+	$check('2.32.0: stored as hashes and a sealed key: no code, no credential id in the record', \array_sum(\array_map(fn ($c) => (int) \str_contains($sRawV, $c), $aVCodes)) + (int) \str_contains($sRawV, SoftAuthenticator::b64u($kV->credentialId)), 0);
+	$check('2.32.0: pending, the account is not enrolled: a forced tenant is still forced', $v->DoGetTwoFactorInfo()['Result']['Enrolled'], false);
+	$check('2.32.0: pending, the key is not asked at login (nothing is on yet)', $connexion($v, array()), 'ok');
+
+	// Hostile proofs.
+	foreach (array('', '   ', '12345', '1234567890', 'abcdefghi', "12345678\0", '１２３４５６７８９', '000000000') as $sBad) {
+		$check('2.32.0: hostile proof ' . \json_encode($sBad) . ' refused', $confirmer($v, $sBad), false);
+	}
+	$v->params = array('Code' => array($aVCodes[$iAsk]));
+	$check('2.32.0: a proof sent as an array is refused', $v->DoConfirmBackupCodes()['Result'], false);
+	$check('2.32.0: five wrong proofs discard the codes (and the pending key)', array($v->DoGetTwoFactorInfo()['Result']['Pending'], $v->DoGetTwoFactorInfo()['Result']['Passkeys']), array(false, array()));
+	$check('2.32.0: … and the right one no longer works', $confirmer($v, $aVCodes[$iAsk]), false);
+	$check('2.32.0: … the account is exactly as before (no factor)', $v->DoGetTwoFactorInfo()['Result']['On'], false);
+
+	// Another browser, an expiry, a cancel.
+	$aV = $registre($v, $kV);
+	$aVCodes = \explode(' ', $aV['BackupCodes']); $iAsk = $aV['PendingAsk'] - 1;
+	$v->binding = 'browser-2';
+	$check('2.32.0: another browser of the same account cannot confirm what it never saw', $confirmer($v, $aVCodes[$iAsk]), false);
+	$v->binding = 'browser-1';
+	$aRaw = $v->raw(); $aRaw['Pending']['e'] = \time() - 1; $v->setRaw($aRaw);
+	$check('2.32.0: expired codes are no proof', array($confirmer($v, $aVCodes[$iAsk]), $v->DoGetTwoFactorInfo()['Result']['Pending']), array(false, false));
+	$aV = $registre($v, $kV);
+	$v->params = array();
+	$check('2.32.0: cancel drops the pending codes and key', array($v->DoCancelPendingCodes()['Result']['Pending'], $v->DoGetTwoFactorInfo()['Result']['Passkeys']), array(false, array()));
+	$check('2.32.0: nothing pending: a proof is refused', $confirmer($v, '123456789'), false);
+
+	// The right proof.
+	$aV = $registre($v, $kV);
+	$aVCodes = \explode(' ', $aV['BackupCodes']); $iAsk = $aV['PendingAsk'] - 1;
+	$aRaw = $v->raw(); $aRaw['Failures'] = array(\time(), \time()); $aRaw['LockedUntil'] = 0; $v->setRaw($aRaw);
+	$aOk = $confirmer($v, $aVCodes[$iAsk]);
+	$check('2.32.0: the right code: the key is active, the second factor on, the key alone', array($aOk['On'], $aOk['Enrolled'], $aOk['OnlyKey'], $aOk['Pending'], \count($aOk['Passkeys']), $aOk['BackupLeft']), array(true, true, true, false, 1, 8));
+	$check('2.32.0: the lockout counter is not wiped by a confirmation', \count($v->raw()['Failures']), 2);
+	$check('2.32.0: … and a backup code now opens the login (spent: 7 left)', $connexion($v, array('totp_code' => $aVCodes[0])), 'ok');
+	$check('2.32.0: … the retyped code is one of the codes in force, not spent', $v->DoGetTwoFactorInfo()['Result']['BackupLeft'], 7);
+	$check('2.32.0: login now needs the second factor', $connexion($v, array()), 'refused:TwoFactorCodeRequired');
+	$check('2.32.0: no backup code is kept in clear in the record', \array_sum(\array_map(fn ($c) => (int) \str_contains($v->oStore->data['rym@smail.tn'], $c), $aVCodes)), 0);
+
+	// A key sitting next to a half-made authenticator enrolment: the enrolment is given up, not left with dead codes.
+	$h2 = new P(); $h2->config = $WA;
+	$c2 = $h2->DoCreateTwoFactorSecret()['Result'];
+	$a2 = $registre($h2, new SoftAuthenticator(-7));
+	$confirmer($h2, \explode(' ', $a2['BackupCodes'])[$a2['PendingAsk'] - 1]);
+	$check('2.32.0: a half-made authenticator enrolment next to the key is abandoned (its codes were replaced)', array($h2->DoGetTwoFactorInfo()['Result']['IsSet'], isset($h2->raw()['SecretBox'])), array(false, false));
+	$check('2.32.0: … its old codes are dead', $connexion($h2, array('totp_code' => \explode(' ', $c2['BackupCodes'])[0])), 'refused:');
+
+	// Regenerating the codes.
+	$v->params = array();
+	$check('2.32.0: regenerate without a current factor is refused', $v->DoRegenerateBackupCodes()['Result'], false);
+	$v->params = array('Code' => '123456');
+	$check('2.32.0: … with a wrong code too', $v->DoRegenerateBackupCodes()['Result'], false);
+	$deverrouiller($v);
+	$aRg = $v->DoRegenerateBackupCodes() ; $v->params = $preuve($v, $kV);
+	$aRg = $v->DoRegenerateBackupCodes()['Result'];
+	$aNew = \explode(' ', $aRg['BackupCodes']);
+	$check('2.32.0: with the key: eight new codes, pending, no key waiting', array(\count($aNew), $aRg['Pending'], $aRg['PendingKey'], $aRg['BackupLeft']), array(8, true, false, 7));
+	$check('2.32.0: until confirmed, the old codes hold', $connexion($v, array('totp_code' => $aVCodes[1])), 'ok');
+	$check('2.32.0: … and the new ones do not yet', $connexion($v, array('totp_code' => $aNew[0])), 'refused:');
+	$deverrouiller($v);
+	$check('2.32.0: a wrong proof leaves the old ones', $confirmer($v, $aNew[($aRg['PendingAsk']) % 8]), false);
+	$aC = $confirmer($v, $aNew[$aRg['PendingAsk'] - 1]);
+	$check('2.32.0: confirmed: eight codes, the key untouched', array($aC['BackupLeft'], \count($aC['Passkeys']), $aC['Pending']), array(8, 1, false));
+	$check('2.32.0: the old codes are dead, the new ones work', array($connexion($v, array('totp_code' => $aVCodes[2])), $connexion($v, array('totp_code' => $aNew[0]))), array('refused:', 'ok'));
+	$z = new P(); $z->config = $WA;
+	$check('2.32.0: no second factor: nothing to regenerate', $z->DoRegenerateBackupCodes()['Result'], false);
+
+	// With a second key / with the authenticator on: no waiting.
+	$check('2.32.0: a second key is active at once (the codes already exist)', \count($inscrire($v, new SoftAuthenticator(-8), $preuve($v, $kV))['Passkeys']), 2);
+	$t2 = new P(); $t2->config = $WA;
+	$cT2 = $t2->DoCreateTwoFactorSecret()['Result'];
+	$t2->params = array('Code' => $previous($cT2['Secret'])); $t2->DoVerifyTwoFactorCode();
+	$t2->params = array('Enable' => '1'); $t2->DoEnableTwoFactor();
+	$aT2 = $inscrire($t2, new SoftAuthenticator(-7), array('Code' => $current($cT2['Secret'])));
+	$check('2.32.0: with the authenticator on, a key is active at once and the warning stays off', array(\count($aT2['Passkeys']), $aT2['OnlyKey'], $aT2['Pending']), array(1, false, false));
+
+	// The warning: a key alone says so, and not once an authenticator joins.
+	$check('2.32.0: the info of a key-only account carries the warning flag', $v->DoGetTwoFactorInfo()['Result']['OnlyKey'], true);
+	$check('2.32.0: the actions of the proof are open to an account still setting up', array(\str_contains(TwoFactorAuthPlugin::SETUP_ALLOWED_ACTIONS, 'DoPluginConfirmBackupCodes'), \str_contains(TwoFactorAuthPlugin::SETUP_ALLOWED_ACTIONS, 'DoPluginCancelPendingCodes'), \str_contains(TwoFactorAuthPlugin::SETUP_ALLOWED_ACTIONS, 'Regenerate')), array(true, true, false));
+
+	foreach (array($v, $h2, $z, $t2) as $x) { \is_dir($x->oStore->root) && \exec('rm -rf ' . \escapeshellarg($x->oStore->root)); }
 
 	foreach (array($b, $u, $kb, $tw) as $x) { \is_dir($x->oStore->root) && \exec('rm -rf ' . \escapeshellarg($x->oStore->root)); }
 

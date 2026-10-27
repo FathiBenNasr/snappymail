@@ -1,5 +1,85 @@
 # two-factor-auth — TODO
 
+## 27 octobre 2026 — 2.32.0 : une clé seule ne doit pas enfermer dehors — **non déployé**
+
+* **Le cas** (TODO de la suite §76) : `fbennasr@convergent.tn` n'a plus pu se connecter à
+  fastmail. Compte sans TOTP, une clé de sécurité enregistrée le matin, huit codes
+  de secours montrés une fois et non gardés. Le soir, sur un autre appareil, la clé
+  n'était pas disponible ; les codes à six chiffres tapés venaient d'ailleurs et
+  étaient refusés avant le mot de passe. Sa 2FA a dû être remise à zéro côté serveur.
+* **Note de conception — le mécanisme retenu : des codes « en attente », prouvés par une
+  saisie.**
+  * *Ce qui a été choisi.* À l'enregistrement d'une première clé (aucun TOTP actif, aucune
+    clé), le serveur ne l'active pas : il la range, scellée, dans `Pending.kb` avec
+    huit empreintes de codes neufs (`Pending.h`), un rang à retaper choisi par le
+    serveur (`ask`), l'empreinte du jeton de connexion du navigateur (`b`), une
+    échéance de 15 min (`e`) et un compteur d'essais (`n`). `DoConfirmBackupCodes`
+    reçoit un code ; s'il égale l'empreinte du rang demandé, la clé passe dans
+    `PasskeysBox` et les empreintes deviennent `BackupHashes`.
+  * *Pourquoi retaper.* Une case « j'ai enregistré mes codes » ne prouve rien : on la
+    coche sans lire. Retaper, après que les codes ont quitté l'écran, prouve que la
+    personne a **un support où les relire** : papier, gestionnaire de mots de passe.
+    Le rang est tiré par le serveur, pour qu'on ne puisse pas répondre « le
+    premier » sans la liste. Limite connue : cela prouve qu'on a copié, pas
+    qu'on saura retrouver la copie dans six mois.
+  * *Pourquoi « en attente » plutôt que « actif, avec un drapeau non confirmé ».*
+    Un compte dont la clé est active exige déjà le second facteur à la connexion :
+    c'est précisément l'enfermement. En attente, `isOn()` reste faux : la connexion
+    est celle d'avant, **rien n'est verrouillé** si la personne s'arrête là, ferme
+    l'onglet ou perd les codes. Rien d'actif n'est remplacé non plus.
+  * *Pourquoi pas imposer un TOTP* : la demande est de l'**inviter** (avertissement
+    permanent, bouton), pas de l'exiger ; certains n'ont pas de téléphone, et les
+    codes de secours prouvés sont une sortie suffisante.
+  * *Même mécanisme pour « Régénérer les codes »* (`DoRegenerateBackupCodes`, avec un
+    facteur courant) : codes en attente **sans clé** ; les anciens valent jusqu'à
+    la preuve, de sorte qu'un clic maladroit ne remplace pas des codes gardés par
+    des codes perdus.
+  * *Une deuxième clé, ou une clé avec un TOTP actif* : actives aussitôt, comme avant
+    (un facteur courant est exigé) : les codes existent déjà.
+* **Garde-fous de l'action de preuve** (`DoConfirmBackupCodes`, `DoCancelPendingCodes`,
+  ouvertes aux comptes qui s'enrôlent) : liée au navigateur qui a vu les codes ;
+  5 faux essais jettent les codes (et la clé en attente) ; expiration 15 min ; une
+  entrée qui n'est pas une chaîne de 9 chiffres est un faux essai ; un coffre de clé
+  altéré n'active rien ; le verrouillage de l'enregistrement n'est pas remis à zéro par
+  une confirmation ; S-09 (mots de passe d'application) et S-21 (appareils retenus)
+  s'appliquent **à l'activation**, non plus à l'enregistrement.
+* **Un greffon enrôlé à demi.** Si un secret TOTP était créé et non activé, la
+  confirmation de la clé l'abandonne : ses codes affichés sont remplacés par ceux
+  de la clé, il ne pourrait plus s'achever.
+* **Écran de connexion** — ce que montrait la 2.31.0 : le bouton « Utiliser une clé de
+  sécurité » était déjà présent pour tout visiteur (`TwoFactorKeyLogin`, venu de la
+  configuration seule) ; le champ du code ne disait rien d'un code de secours ; le
+  rappel (2.30.0) ne s'ajoutait que si le champ du code était **vide**. Le 27 octobre,
+  la personne avait tapé de faux codes : pas de rappel. **Changé** : le champ s'appelle
+  « Code de vérification ou code de secours » ; **tout** refus 102 ajoute le même
+  rappel (avec la clé si les clés sont allumées). Le texte ne dépend ni du compte ni
+  du contenu du champ : aucun indice avant le mot de passe, test JS à l'appui.
+* ⚠️ **Un bug que les essais unitaires ne voyaient pas, et le banc oui** : les trois
+  nouvelles actions n'étaient pas déclarées dans `Init()` (`addJsonHook`). Les tests
+  appelaient les méthodes directement ; le navigateur recevait « 999 ». Un test
+  vérifie désormais que **chaque** méthode publique `Do*` a son crochet.
+* Essais : PHP Actions 303, Record 72, WebAuthn 92 ; JS 51. 25 mutations sur 25 tuées :
+  liaison au navigateur, rang demandé, 5 essais, échéance, format du code, secret à
+  demi enrôlé, coffre altéré, clé activée à l'enregistrement, régénération sans preuve
+  ni sans facteur actif, enregistrement malgré une liaison refusée, actions absentes de
+  la liste d'enrôlement, drapeau « clé seule », entrée non-chaîne (avertissement PHP),
+  S-09, S-21, rappel conditionné au champ, champ du code, rappel sans la clé, garde
+  `Auth`, message d'erreur, codes qui restent à l'écran, drapeau `OnlyKey` ignoré,
+  deux crochets absents.
+* **Banc** `BANC=cle` sur banc-smail, 70/70 : inscription → codes → faux code refusé →
+  bon code → avertissement (rechargé aussi) → connexion avec la clé ; deux refus sans
+  facteur, **0 → 0 échec dans l'annuaire**, rappel identique ; en et ar : connexion,
+  avertissement, régénération avec la clé et preuve. Compte éphémère supprimé,
+  greffon et configuration du banc remis. `forcer` 34/34 ; `avant` 19/19 après avoir
+  changé son contrôle (le rappel suit désormais tout refus, code saisi ou non).
+* **Pas vérifié** :
+  * le rendu sur un téléphone, le lecteur d'écran ;
+  * une vraie clé matérielle (le banc utilise l'authentificateur virtuel de Chrome) ;
+  * les langues autres que fr, en, ar : elles retombent sur l'anglais ;
+  * aucun essai sur fastmail ni smail.tn.
+* **Déploiement** : écrit dans le README du greffon (« Deploying »). Rien n'est
+  déployé ; le compte du propriétaire n'est pas touché.
+
 ## 26 octobre 2026 — 2.31.0 : la clé de sécurité aussi, avant le mot de passe
 
 * **Demandé par le propriétaire** : *« applique la même vérification aux comptes à

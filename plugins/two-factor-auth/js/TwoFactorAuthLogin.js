@@ -65,7 +65,9 @@
 		if ('Login' === e.detail.viewModelTemplateID) {
 			loginView = e.detail;
 			const container = e.detail.viewModelDom.querySelector('#plugin-Login-BottomControlGroup'),
-				placeholder = 'PLUGIN_2FA/LABEL_TWO_FACTOR_CODE';
+				// 2.32.0: says "or a backup code" to every visitor, the same way:
+				// a person without their key must see that a way in exists.
+				placeholder = 'PLUGIN_2FA/PLACEHOLDER_LOGIN_CODE';
 			if (container) {
 				container.prepend(Element.fromHTML('<div class="controls">'
 					+ '<span class="fontastic">⏱</span>'
@@ -114,9 +116,13 @@
 			// "code required" there would tell anyone who has a second factor.
 			// The reminder is decided here, from the empty field alone, so it
 			// shows for every account and says nothing about this one.
-			const code = dom('input[name=totp_code]');
-			if (102 === e.detail?.error && loginView && code && !String(code.value || '').trim()) {
-				queueMicrotask(() => loginView.submitErrorAdditional(rl.i18n('PLUGIN_2FA/HINT_CODE_WITH_PASSWORD')));
+			// 2.32.0: for EVERY refusal of the credentials (code empty or not,
+			// right password or not): the same text, so it still says nothing of
+			// the account — and a person with a wrong code is told that a backup
+			// code, or the key, also opens it.
+			if (102 === e.detail?.error && loginView) {
+				queueMicrotask(() => loginView.submitErrorAdditional(rl.i18n(keyLogin()
+					? 'PLUGIN_2FA/HINT_CODE_OR_KEY_WITH_PASSWORD' : 'PLUGIN_2FA/HINT_CODE_WITH_PASSWORD')));
 			}
 		}
 	});

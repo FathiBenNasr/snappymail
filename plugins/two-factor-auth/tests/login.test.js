@@ -40,22 +40,33 @@ test('code absent : l\'écran demande le code et y place le curseur', () => {
 	assert.strictEqual(c.focalise(), 1);
 });
 
-test('mot de passe refusé, code saisi : le message du cœur reste', () => {
+// 2.32.0: the reminder follows EVERY refusal of the credentials — the same
+// text for any account, a wrong code or an empty one — and names the backup code.
+test('mot de passe refusé, code saisi : le même rappel, pour tout compte', () => {
 	const c = charger();
 	c.champ.value = '123456';
 	c.repondre({ error: 102, data: { messageAdditional: '' } });
 	assert.strictEqual(c.vue.erreur, '');
-	assert.strictEqual(c.vue.complement, 'x');
+	assert.strictEqual(c.vue.complement, '«PLUGIN_2FA/HINT_CODE_WITH_PASSWORD»');
 });
 
-// 2.30.0 : le serveur refuse sans le nommer un compte à second facteur venu
-// sans code. Le rappel naît du champ vide seul : il vaut pour tout compte.
-test('refus avec le champ du code vide : le rappel s\'ajoute, pour tout compte', () => {
+test('refus avec le champ du code vide : le même rappel (rien ne distingue les causes)', () => {
 	const c = charger();
 	c.champ.value = '  ';
 	c.repondre({ error: 102, data: { messageAdditional: '' } });
 	assert.strictEqual(c.vue.erreur, '');
 	assert.strictEqual(c.vue.complement, '«PLUGIN_2FA/HINT_CODE_WITH_PASSWORD»');
+});
+
+test('refus : le rappel est identique avec champ vide, plein, ou sans champ', () => {
+	const textes = new Set();
+	for (const valeur of [undefined, '', '123456', '000000000']) {
+		const c = charger();
+		valeur !== undefined && (c.champ.value = valeur);
+		c.repondre({ error: 102, data: { messageAdditional: '' } });
+		textes.add(c.vue.erreur + '|' + c.vue.complement);
+	}
+	assert.strictEqual(textes.size, 1);
 });
 
 test('autre erreur que l\'authentification (serveur injoignable) : pas de rappel', () => {
@@ -157,4 +168,49 @@ test('le défi n\'est jamais peint : effacé avant la fin de la tâche', async (
 	peint = vue.complement;
 	assert.strictEqual(peint, '', 'le défi aurait été peint');
 	assert.strictEqual(vue.erreur, 'PLUGIN_2FA/ERROR_CODE_REQUIRED');
+});
+
+// 2.32.0: with the keys on, the login screen offers the key to every visitor,
+// and the refusal hint names it too — the same for all accounts.
+function avecCles(cles) {
+	const ecoute = {}, files = [];
+	const html = [];
+	const conteneur = { prepend: e => html.push(e), append: e => html.push(e) };
+	const vue = {
+		viewModelTemplateID: 'Login',
+		viewModelDom: { querySelector: s => ('#plugin-Login-BottomControlGroup' === s ? conteneur : null) },
+		erreur: '', complement: '',
+		submitError(v) { this.erreur = v; }, submitErrorAdditional(v) { this.complement = v; }
+	};
+	const bac = {
+		addEventListener: (n, f) => { ecoute[n] = f; },
+		setTimeout: f => files.push(f), queueMicrotask: f => files.push(f),
+		Element: { fromHTML: h => ({ h, querySelector: () => null }) },
+		document: { location: {} },
+		window: { TwoFactorWebAuthn: { supported: () => true, fromRefusal: () => null } }
+	};
+	bac.window.rl = { settings: { get: k => ('TwoFactorKeyLogin' === k ? cles : false) }, i18n: k => '«' + k + '»' };
+	vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../js/TwoFactorAuthLogin.js'), 'utf8'), bac);
+	ecoute['rl-view-model']({ detail: vue });
+	return { vue, html, repondre: d => { ecoute['sm-user-login-response']({ detail: d }); files.splice(0).forEach(f => f()); } };
+}
+
+test('2.32.0: le champ du code annonce « ou un code de secours », pour tout visiteur', () => {
+	for (const cles of [true, false]) {
+		const e = avecCles(cles);
+		assert.ok(e.html.some(x => x.h.includes('PLUGIN_2FA/PLACEHOLDER_LOGIN_CODE')), 'placeholder');
+		assert.ok(!e.html.some(x => x.h.includes('LABEL_TWO_FACTOR_CODE')));
+	}
+});
+
+test('2.32.0: clés allumées : le rappel de refus cite la clé ; éteintes : il ne la cite pas', () => {
+	const a = avecCles(true); a.repondre({ error: 102, data: { messageAdditional: '' } });
+	assert.strictEqual(a.vue.complement, '«PLUGIN_2FA/HINT_CODE_OR_KEY_WITH_PASSWORD»');
+	const b = avecCles(false); b.repondre({ error: 102, data: { messageAdditional: '' } });
+	assert.strictEqual(b.vue.complement, '«PLUGIN_2FA/HINT_CODE_WITH_PASSWORD»');
+});
+
+test('2.32.0: le bouton de la clé est dans la page pour tous, avec les clés allumées', () => {
+	const e = avecCles(true);
+	assert.ok(e.html.some(x => x.h.includes('twofactor-key')));
 });

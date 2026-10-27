@@ -3,6 +3,32 @@
 Les versions antérieures à 2.30.0 sont décrites, avec leurs mesures, dans
 [`TODO.md`](TODO.md).
 
+## 2.32.0 — 27 octobre 2026
+
+* **Une clé de sécurité seule ne peut plus vous enfermer dehors sans que vous l'ayez
+  voulu.** Quand aucune application à codes n'est active, l'enregistrement d'une
+  première clé dit : « Cette clé sera votre seul second facteur : sans elle, seuls
+  vos codes de secours vous ouvriront le compte ». La clé est mise de côté avec
+  huit nouveaux codes de secours, qui s'affichent une fois. Elle ne devient active
+  qu'après la preuve que vous les avez gardés : vous cliquez « Je les ai gardés »,
+  les codes quittent l'écran, et vous retapez celui dont le serveur donne le
+  numéro. Tant que ce n'est pas fait, votre compte ne change pas : rien n'est
+  verrouillé, et « Annuler et recommencer » repart de zéro.
+* **Dans les réglages**, un avertissement reste affiché tant que la clé est votre seul
+  second facteur, avec le bouton « Ajouter une application à codes ».
+* **Régénérer les codes de secours** (nouveau bouton, avec le nombre de codes
+  restants) : demande votre code ou votre clé, émet huit codes en attente ; les
+  anciens restent valables jusqu'à ce que vous ayez retapé l'un des nouveaux.
+* **Écran de connexion** : le champ du code annonce « Code de vérification ou code de
+  secours », et tout refus d'identifiants — quelle qu'en soit la cause — ajoute le même
+  rappel (le code, un code de secours, ou la clé de sécurité). Le refus lui-même
+  reste identique pour tous les comptes : rien ne dit ce que porte une adresse.
+* Rien n'est affaibli : les codes restent gardés en empreintes seulement, le
+  verrouillage après échecs est inchangé (une confirmation ne le remet pas à
+  zéro), et un compte qui avait déjà une clé, ou une application à codes active,
+  ajoute une clé comme avant (avec un facteur courant).
+* Traductions fr, en, ar. Les autres langues retombent sur l'anglais.
+
 ## 2.31.0 — 26 octobre 2026
 
 * **La clé de sécurité est vérifiée avant le mot de passe**, comme le code depuis
