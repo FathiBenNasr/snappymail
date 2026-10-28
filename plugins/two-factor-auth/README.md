@@ -117,7 +117,7 @@ record, sealed with a key derived from `APP_SALT`.
     BANC=cle sh plugins/two-factor-auth/tests/browser/preparer.sh   # banc-smail, CDP virtual authenticator
     BANC=avant sh plugins/two-factor-auth/tests/browser/preparer.sh # banc-smail, the directory's failure count
 
-## Deploying (2.32.0, same steps as 2.31.0 — written, not run)
+## Deploying (2.32.0, same steps as 2.31.0 — run on both webmails on 2026-10-28)
 
 Nothing is deployed by the commit. For each webmail, in this order:
 

@@ -1,6 +1,20 @@
 # two-factor-auth — TODO
 
-## 27 octobre 2026 — 2.32.0 : une clé seule ne doit pas enfermer dehors — **non déployé**
+## 28 octobre 2026 — 2.32.0 déployée sur les deux webmails
+
+À la demande du propriétaire. Procédure du README (« Deploying ») : sauvegardes
+`/var/backups/<vhost>/plugins/two-factor-auth.bak-*`, dossier neuf sans `tests/` ni `docs/` posé d'un `mv`,
+`restorecon -R` aussitôt, `restart php-fpm`, cache de smail vidé. Vérifié par Apache : version 2.32.0,
+`ConfirmBackupCodes` dans le paquet JS, `two-factor-auth` toujours dans `enabled_list`, écrans de connexion
+en 200. La production portait exactement la 2.31.0 du dépôt (comparée fichier par fichier avant). **Aucune 2FA
+de compte réel touchée, aucun essai en production.**
+
+Relevé en passant : une seule ligne `Maximum execution time of 30 seconds exceeded … index.php on line 278`
+(`FilterHttpPaths`) dans `smail-webmail-error.log`, le 28 octobre à 02:20 UTC, **avant** le déploiement. La
+fonction ne fait que lire un tableau : c'est la requête entière qui avait épuisé ses 30 s, l'horloge tombant
+là par hasard. À surveiller, pas d'action.
+
+## 27 octobre 2026 — 2.32.0 : une clé seule ne doit pas enfermer dehors
 
 * **Le cas** (TODO de la suite §76) : `fbennasr@convergent.tn` n'a plus pu se connecter à
   fastmail. Compte sans TOTP, une clé de sécurité enregistrée le matin, huit codes
