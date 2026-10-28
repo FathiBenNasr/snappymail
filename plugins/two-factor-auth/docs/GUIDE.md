@@ -14,7 +14,7 @@ connaît (Google Authenticator, Microsoft Authenticator, FreeOTP…).
 3. Cliquez sur **Créer une nouvelle clé secrète**. Un code QR s'affiche.
 4. Dans l'application du téléphone, ajoutez un compte en photographiant le code QR.
 5. Cliquez sur **test**, puis saisissez le code que l'application affiche.
-6. Notez vos **codes de secours** et gardez-les en lieu sûr (voir plus bas).
+6. Notez vos **codes de secours** et gardez-les en lieu sûr (voir [« Garder ses codes de secours »](#garder-ses-codes-de-secours)).
 7. Cochez **Activer l'authentification en deux étapes**.
 
 **Résultat :** à la prochaine connexion, le webmail demande le code de l'application en plus du mot de
@@ -104,7 +104,7 @@ liste.
 
 1. Ouvrez **Réglages**, puis **Authentification en deux étapes**.
 2. Cliquez sur **Régénérer les codes de secours**, puis confirmez avec votre code ou votre clé.
-3. Gardez la nouvelle liste et confirmez-la comme plus haut.
+3. Gardez la nouvelle liste et confirmez-la comme dans [« Garder ses codes de secours »](#garder-ses-codes-de-secours).
 
 **Résultat :** huit nouveaux codes. Les anciens restent valables jusqu'à la confirmation des nouveaux.
 

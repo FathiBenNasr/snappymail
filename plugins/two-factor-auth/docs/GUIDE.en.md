@@ -14,7 +14,7 @@ Authenticator, Microsoft Authenticator, FreeOTP…).
 3. Click **Create a secret**. A QR code appears.
 4. In the phone app, add an account by scanning the QR code.
 5. Click **test**, then type the code the app shows.
-6. Write down your **backup codes** and keep them somewhere safe (see below).
+6. Write down your **backup codes** and keep them somewhere safe (see ["Keep your backup codes"](#keep-your-backup-codes)).
 7. Tick **Enable 2-Step verification**.
 
 **Result:** at your next sign-in, the webmail asks for the app's code as well as your password. If your
@@ -98,7 +98,7 @@ replacement.
 
 1. Open **Settings**, then **2-Step Verification (TOTP)**.
 2. Click **Regenerate backup codes**, then confirm with your code or your key.
-3. Keep the new list and confirm it as above.
+3. Keep the new list and confirm it as in ["Keep your backup codes"](#keep-your-backup-codes).
 
 **Result:** eight new codes. The old ones stay valid until the new ones are confirmed.
 
