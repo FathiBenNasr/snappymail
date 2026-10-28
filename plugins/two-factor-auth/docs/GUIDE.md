@@ -23,6 +23,8 @@ Thunderbird, Outlook) en demandent un à la place de votre mot de passe : créez
 
 ## Se connecter avec le code
 
+**À quoi ça sert :** ouvrir sa session quand la validation en deux étapes est active.
+
 1. Sur l'écran de connexion, saisissez votre adresse et votre mot de passe.
 2. Dans le champ **Code de vérification ou code de secours**, tapez le code que l'application affiche.
 3. Validez.
@@ -74,6 +76,8 @@ change pour votre compte. **Annuler et recommencer** produit une nouvelle liste.
 
 ## Se connecter avec une clé de sécurité
 
+**À quoi ça sert :** ouvrir sa session d'un geste, sans taper de code.
+
 1. Sur l'écran de connexion, saisissez votre adresse et votre mot de passe.
 2. Cliquez sur **Utiliser une clé de sécurité ou une clé d'accès**.
 3. Touchez la clé, ou confirmez sur votre appareil.
@@ -84,6 +88,8 @@ change pour votre compte. **Annuler et recommencer** produit une nouvelle liste.
 remplacement.
 
 ## Se connecter avec un code de secours
+
+**À quoi ça sert :** entrer dans son compte sans son téléphone ni sa clé.
 
 1. Sur l'écran de connexion, saisissez votre adresse et votre mot de passe.
 2. Dans le champ **Code de vérification ou code de secours**, tapez un de vos codes de secours.
@@ -104,14 +110,21 @@ liste.
 
 ## Quand la clé est votre seul second facteur
 
+**À quoi ça sert :** ne pas perdre l'accès à votre compte le jour où la clé n'est pas avec vous.
+
 Tant que vous n'avez qu'une clé, sans application à codes, un avertissement reste affiché dans les
 réglages :
 
 ![L'avertissement « clé seule »](captures/cle-1-avertissement.png)
 
-Cliquez sur **Ajouter une application à codes** pour avoir une seconde voie d'accès.
+1. Cliquez sur **Ajouter une application à codes**.
+2. Suivez les étapes de « Activer la validation avec une application à codes ».
+
+**Résultat :** vous avez une seconde voie d'accès, et l'avertissement disparaît.
 
 ## Retirer une clé
+
+**À quoi ça sert :** ne plus accepter une clé perdue ou remplacée.
 
 1. Ouvrez **Réglages**, puis **Authentification en deux étapes**.
 2. À côté de la clé, cliquez sur **Retirer**.

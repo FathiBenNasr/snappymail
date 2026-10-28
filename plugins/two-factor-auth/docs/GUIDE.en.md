@@ -23,6 +23,8 @@ your password: create them first.
 
 ## Sign in with the code
 
+**What it is for:** open your session when 2-step verification is on.
+
 1. On the sign-in screen, type your address and password.
 2. In the **Verification code or backup code** field, type the code the app shows.
 3. Confirm.
@@ -69,6 +71,8 @@ your account if the key is not with you.
 
 ## Sign in with a security key
 
+**What it is for:** open your session in one move, without typing a code.
+
 1. On the sign-in screen, type your address and password.
 2. Click **Use a security key or passkey**.
 3. Touch the key, or confirm on your device.
@@ -79,6 +83,8 @@ your account if the key is not with you.
 replacement.
 
 ## Sign in with a backup code
+
+**What it is for:** get into your account without your phone or your key.
 
 1. On the sign-in screen, type your address and password.
 2. In the **Verification code or backup code** field, type one of your backup codes.
@@ -98,13 +104,20 @@ replacement.
 
 ## When the key is your only second factor
 
+**What it is for:** not lose access to your account the day the key is not with you.
+
 As long as you only have a key, with no authenticator app, a warning stays in the settings:
 
 ![The "key only" warning](captures/cle-1-avertissement-en.png)
 
-Click **Add an authenticator app** to have a second way in.
+1. Click **Add an authenticator app**.
+2. Follow the steps of "Turn on verification with an authenticator app".
+
+**Result:** you have a second way in, and the warning goes away.
 
 ## Remove a key
+
+**What it is for:** stop accepting a lost or replaced key.
 
 1. Open **Settings**, then **2-Step Verification (TOTP)**.
 2. Next to the key, click **Remove**.
