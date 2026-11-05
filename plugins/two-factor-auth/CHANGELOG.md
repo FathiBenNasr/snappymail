@@ -3,6 +3,24 @@
 Les versions antérieures à 2.30.0 sont décrites, avec leurs mesures, dans
 [`TODO.md`](TODO.md).
 
+## 2.33.0 — 5 novembre 2026
+
+* **Recevoir le code de connexion sur son adresse de secours** (demandé pour smail.tn et ses domaines hébergés).
+  Dans les réglages, la section **Code par l'adresse de secours** montre l'adresse vérifiée, masquée
+  (`i•••@gmail.com`), et l'active par un code de 8 chiffres reçu puis retapé. Si c'est votre premier second
+  facteur, huit codes de secours s'affichent et doivent être prouvés (comme pour une première clé).
+* **À la connexion**, le bouton **Recevoir un code sur mon adresse de secours** est proposé à tout visiteur là où le
+  webmail l'offre. La réponse est la même phrase pour tous les comptes, après la même attente : elle ne dit pas
+  qui a ce facteur, et l'adresse n'est pas montrée avant le mot de passe. Le code vaut 10 minutes, une fois, dans
+  ce navigateur.
+* **Plafonds** : 3 codes en 15 minutes et 10 par jour par compte, 10 par heure par adresse IP ; au plus 3 codes en
+  vie, 5 faux essais les jettent.
+* **L'adresse de secours ne se change plus sans un code courant** quand la validation en deux étapes est active
+  (SnappyMail-formule 0.14.0), et l'ancienne adresse est prévenue par la console.
+* **Moins sûr qu'une application ou une clé**, et dit tel quel dans les réglages : qui lit la boîte de secours
+  reçoit aussi les codes. Seule une adresse **vérifiée** et **hors du domaine du compte** sert.
+* Nouveau réglage `email_code_dir`, vide par défaut (éteint). Traductions fr, en, ar.
+
 ## 2.32.0 — 27 octobre 2026
 
 * **Une clé de sécurité seule ne peut plus vous enfermer dehors sans que vous l'ayez

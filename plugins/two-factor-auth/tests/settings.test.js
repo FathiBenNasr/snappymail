@@ -171,3 +171,36 @@ test('2.32.0: devant l\'écran de connexion (pas authentifié), rien n\'est dema
 	v.regenerateCodes();
 	assert.strictEqual(appels.length, 0);
 });
+
+/* ---- 2.33.0: the code by the recovery address ---- */
+test('2.33.0: first factor: the code typed back switches it on, the backup codes are shown', () => {
+	const { v, appels } = vueAvecServeur({ Auth: true });
+	v.applyInfo({ Passkeys: [], On: false, EmailOffered: true, EmailMasked: 'i•••@gmail.com', EmailOn: false });
+	assert.deepStrictEqual([v.emailOffered(), v.emailMasked()], [true, 'i•••@gmail.com']);
+	v.emailSend();
+	assert.strictEqual(appels[0].action, 'EmailCodeRequest');
+	assert.strictEqual(appels[0].prm.Purpose, 'enroll');
+	appels[0].cb(0, { Result: { Sent: true, Reason: 'sent' } });
+	assert.strictEqual(v.emailSent(), true);
+	v.emailCode(' 12345678 ');
+	v.emailEnable();
+	assert.strictEqual(appels[1].action, 'EmailCodeEnable');
+	assert.strictEqual(JSON.stringify(appels[1].prm), JSON.stringify({ EmailCode: '12345678' }));
+	appels[1].cb(0, { Result: { Passkeys: [], On: false, Pending: true, PendingEmail: true, EmailOn: false, BackupCodes: '111111111 222222222' } });
+	assert.strictEqual(v.viewBackupCodes(), '111111111  222222222');
+});
+
+test('2.33.0: the send cap is said as such', () => {
+	const { v, appels } = vueAvecServeur({ Auth: true });
+	v.emailSend();
+	appels[0].cb(0, { Result: { Sent: false, Reason: 'limit' } });
+	assert.deepStrictEqual([v.emailSent(), v.emailError()], [false, 'PLUGIN_2FA/ERROR_EMAIL_LIMIT']);
+});
+
+test('2.33.0: before login, nothing is asked of the server', () => {
+	const { v, appels } = vueAvecServeur({ Auth: false });
+	v.emailSend();
+	v.emailCode('12345678');
+	v.emailEnable();
+	assert.strictEqual(appels.length, 0);
+});

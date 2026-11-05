@@ -214,3 +214,59 @@ test('2.32.0: le bouton de la clé est dans la page pour tous, avec les clés al
 	const e = avecCles(true);
 	assert.ok(e.html.some(x => x.h.includes('twofactor-key')));
 });
+
+/* ---- 2.33.0: the code by the recovery address ---- */
+function avecCourriel(allume, adresse = 'imen') {
+	const ecoute = {}, appels = [], ajoutes = [], minuteries = [];
+	const bouton = { disabled: false, ecoute: null, addEventListener(n, f) { this.ecoute = f; } };
+	const conteneur = { prepend: () => {}, append: e => ajoutes.push(e) };
+	const courriel = { value: adresse, focus: () => {} };
+	const vue = {
+		viewModelTemplateID: 'Login',
+		viewModelDom: { querySelector: s => ('#plugin-Login-BottomControlGroup' === s ? conteneur : 'input[name=Email]' === s ? courriel : null) },
+		erreur: '', complement: 'x',
+		submitError(v) { this.erreur = v; }, submitErrorAdditional(v) { this.complement = v; }
+	};
+	const bac = {
+		addEventListener: (n, f) => { ecoute[n] = f; },
+		setTimeout: f => minuteries.push(f), queueMicrotask: f => f(),
+		Element: { fromHTML: h => ({ h, querySelector: s => ('button' === s && h.includes('twofactor-email') ? bouton : null) }) },
+		document: { location: {} }, Event: class {}, window: {}
+	};
+	bac.window.rl = {
+		settings: { get: k => ('TwoFactorEmailLogin' === k ? allume : false) },
+		i18n: k => '«' + k + '»',
+		pluginRemoteRequest: (cb, action, params) => appels.push({ cb, action, params })
+	};
+	vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../js/TwoFactorAuthLogin.js'), 'utf8'), bac);
+	ecoute['rl-view-model']({ detail: vue });
+	return { vue, bouton, appels, ajoutes, minuteries };
+}
+
+test('2.33.0: le bouton du code par courriel est là pour tout visiteur quand le webmail l’offre, absent sinon', () => {
+	assert.ok(avecCourriel(true).ajoutes.some(e => e.h.includes('PLUGIN_2FA/BUTTON_EMAIL_CODE')));
+	assert.ok(!avecCourriel(false).ajoutes.some(e => e.h.includes('twofactor-email')));
+});
+
+test('2.33.0: la demande porte l’adresse tapée ; la réponse est la même phrase quoi que dise le serveur', () => {
+	const textes = new Set();
+	for (const reponse of [[0, { Result: true }], [0, { Result: false }], [102, null], [999, { Result: true }]]) {
+		const c = avecCourriel(true);
+		c.bouton.ecoute();
+		assert.strictEqual(JSON.stringify([c.appels[0].action, c.appels[0].params]), JSON.stringify(['EmailCodeLoginRequest', { Email: 'imen' }]));
+		c.appels[0].cb(...reponse);
+		textes.add(c.vue.erreur + '|' + c.vue.complement);
+	}
+	assert.deepStrictEqual([...textes], ['«PLUGIN_2FA/INFO_EMAIL_CODE_SENT»|']);
+});
+
+test('2.33.0: sans adresse tapée, rien ne part ; un clic désactive le bouton une minute', () => {
+	const v = avecCourriel(true, '  ');
+	v.bouton.ecoute();
+	assert.deepStrictEqual([v.appels.length, v.vue.erreur], [0, '«PLUGIN_2FA/ERROR_EMAIL_FOR_CODE»']);
+	const c = avecCourriel(true);
+	c.bouton.ecoute();
+	assert.strictEqual(c.bouton.disabled, true);
+	c.minuteries.splice(0).forEach(f => f());
+	assert.strictEqual(c.bouton.disabled, false);
+});

@@ -39,6 +39,18 @@ final class TwoFactorRecord
 	public const PENDING_TTL = 900;
 	/** Wrong proofs tolerated before the pending codes are discarded (2.32.0). */
 	public const PENDING_TRIES = 5;
+	/** Codes sent to the verified recovery address (2.33.0): 8 digits, so the shape tells them from a TOTP (6) and a backup code (9). */
+	public const EMAIL_DIGITS = 8;
+	/** How long a code sent by email stays valid, in seconds. */
+	public const EMAIL_TTL = 600;
+	/** Codes sent and not yet used, kept per account; the oldest goes first. */
+	public const EMAIL_LIVE = 3;
+	/** Wrong tries that discard the codes of one browser for one purpose. */
+	public const EMAIL_TRIES = 5;
+	/** Sends per account: at most EMAIL_SENDS in EMAIL_SENDS_WINDOW seconds, EMAIL_SENDS_DAY a day. */
+	public const EMAIL_SENDS = 3;
+	public const EMAIL_SENDS_WINDOW = 900;
+	public const EMAIL_SENDS_DAY = 10;
 
 	/** A 32-byte key for this installation, derived from its salt. */
 	public static function key(string $sSalt) : string
@@ -143,9 +155,11 @@ final class TwoFactorRecord
 	 * @param string[] $aCodes the codes as shown
 	 * @param ?array $aKey the key to activate with them (an entry of the key list), or null
 	 */
-	public static function startPending(array $a, array $aCodes, ?array $aKey, string $sBinding, int $iNow, string $sKey) : array
+	public static function startPending(array $a, array $aCodes, ?array $aKey, string $sBinding, int $iNow, string $sKey, bool $bEmail = false) : array
 	{
 		$a['Pending'] = array(
+			// 2.33.0: the code by email waits with them, when it is the account's first factor.
+			'em' => $bEmail,
 			'h' => \array_map(fn ($s) => self::hashCode((string) $s, $sKey), \array_values($aCodes)),
 			'kb' => null === $aKey ? '' : self::seal(\json_encode(array($aKey)), $sKey),
 			'ask' => \random_int(0, \max(0, \count($aCodes) - 1)),
@@ -211,6 +225,9 @@ final class TwoFactorRecord
 				unset($a['SecretBox'], $a['Tested']);
 			}
 		}
+		if (!empty($p['em'])) {
+			$a['EmailOn'] = true;
+		}
 		$a['BackupHashes'] = \array_values($p['h']);
 		return array('ok', self::dropPending($a));
 	}
@@ -259,7 +276,7 @@ final class TwoFactorRecord
 	 */
 	public static function isOn(array $a, string $sKey) : bool
 	{
-		if (!empty($a['Enable'])) {
+		if (!empty($a['Enable']) || !empty($a['EmailOn'])) {
 			return true;
 		}
 		$aKeys = self::passkeys($a, $sKey);
@@ -273,7 +290,7 @@ final class TwoFactorRecord
 	 */
 	public static function hasFactor(array $a, string $sKey) : bool
 	{
-		return !empty($a['Enable']) || (bool) self::passkeys($a, $sKey);
+		return !empty($a['Enable']) || !empty($a['EmailOn']) || (bool) self::passkeys($a, $sKey);
 	}
 
 	/**
@@ -338,6 +355,80 @@ final class TwoFactorRecord
 		return $a;
 	}
 
+	/* ---- a code sent to the verified recovery address (2.33.0) ---- */
+
+	/** A fresh code, from a CSPRNG. */
+	public static function newEmailCode() : string
+	{
+		return \str_pad((string) \random_int(0, 10 ** self::EMAIL_DIGITS - 1), self::EMAIL_DIGITS, '0', STR_PAD_LEFT);
+	}
+
+	/** Whether one more code may be sent for this account now. */
+	public static function emailSendAllowed(array $a, int $iNow) : bool
+	{
+		$aSends = \array_filter((array) ($a['EmailSends'] ?? array()), fn ($t) => \is_int($t) && $t > $iNow - 86400 && $t <= $iNow);
+		$iRecent = \count(\array_filter($aSends, fn ($t) => $t > $iNow - self::EMAIL_SENDS_WINDOW));
+		return \count($aSends) < self::EMAIL_SENDS_DAY && $iRecent < self::EMAIL_SENDS;
+	}
+
+	/**
+	 * The record with one more code sent: its keyed hash, the browser and the
+	 * purpose it is for, its expiry. At most EMAIL_LIVE are kept, the oldest
+	 * goes first; expired ones are dropped. The send is counted.
+	 */
+	public static function addEmailCode(array $a, string $sCode, string $sBinding, string $sPurpose, int $iNow, string $sKey) : array
+	{
+		$aList = \array_values(\array_filter((array) ($a['EmailCodes'] ?? array()),
+			fn ($c) => \is_array($c) && (int) ($c['e'] ?? 0) > $iNow));
+		$aList[] = array('h' => self::hashCode('email|' . $sCode, $sKey), 'b' => self::hashCode($sBinding, $sKey),
+			'p' => $sPurpose, 'e' => $iNow + self::EMAIL_TTL, 'n' => 0);
+		$a['EmailCodes'] = \array_slice($aList, -self::EMAIL_LIVE);
+		$aSends = \array_values(\array_filter((array) ($a['EmailSends'] ?? array()), fn ($t) => \is_int($t) && $t > $iNow - 86400));
+		$aSends[] = $iNow;
+		$a['EmailSends'] = $aSends;
+		return $a;
+	}
+
+	/**
+	 * Spends a code: [right, record]. Right only for the same browser and
+	 * purpose, before it expires; spent at once. A wrong one counts against
+	 * the codes of that browser and purpose, which go after EMAIL_TRIES.
+	 * Compared in constant time.
+	 */
+	public static function takeEmailCode(array $a, string $sCode, string $sBinding, string $sPurpose, int $iNow, string $sKey) : array
+	{
+		$sHash = self::hashCode('email|' . $sCode, $sKey);
+		$sB = self::hashCode($sBinding, $sKey);
+		$bRight = false;
+		$aList = array();
+		foreach ((array) ($a['EmailCodes'] ?? array()) as $c) {
+			if (!\is_array($c) || (int) ($c['e'] ?? 0) <= $iNow) {
+				continue;
+			}
+			$bMine = '' !== $sBinding && $sPurpose === ($c['p'] ?? null) && \hash_equals((string) ($c['b'] ?? ''), $sB);
+			if ($bMine && !$bRight && \hash_equals((string) ($c['h'] ?? ''), $sHash)) {
+				$bRight = true;
+				continue;
+			}
+			$aList[] = $c;
+		}
+		if (!$bRight) {
+			$aKept = array();
+			foreach ($aList as $c) {
+				if ('' !== $sBinding && $sPurpose === ($c['p'] ?? null) && \hash_equals((string) ($c['b'] ?? ''), $sB)) {
+					$c['n'] = (int) ($c['n'] ?? 0) + 1;
+					if ($c['n'] >= self::EMAIL_TRIES) {
+						continue;
+					}
+				}
+				$aKept[] = $c;
+			}
+			$aList = $aKept;
+		}
+		$a['EmailCodes'] = $aList;
+		return array($bRight, $a);
+	}
+
 	public static function isLocked(array $a, int $iNow) : bool
 	{
 		return (int) ($a['LockedUntil'] ?? 0) > $iNow;
@@ -391,12 +482,22 @@ final class TwoFactorRecord
 	 * @param callable $fSlice fn(string $secret, string $code): ?int — the
 	 *        matching time step, or null
 	 */
-	public static function check(array $a, string $sCode, string $sKey, int $iNow, callable $fSlice) : array
+	public static function check(array $a, string $sCode, string $sKey, int $iNow, callable $fSlice, ?array $aEmail = null) : array
 	{
 		if (self::isLocked($a, $iNow)) {
 			return array('locked', $a);
 		}
 		$sCode = \trim($sCode);
+		if (\strlen($sCode) === self::EMAIL_DIGITS && \ctype_digit($sCode)) {
+			// 2.33.0: a code sent to the recovery address, for this browser and
+			// this purpose only ($aEmail: ['b' => binding, 'p' => purpose]).
+			// Without the factor on, only an enrolment may use one.
+			if (null === $aEmail || (empty($a['EmailOn']) && 'enroll' !== ($aEmail['p'] ?? ''))) {
+				return array('wrong', self::recordFailure($a, $iNow));
+			}
+			[$bOk, $a] = self::takeEmailCode($a, $sCode, (string) ($aEmail['b'] ?? ''), (string) ($aEmail['p'] ?? ''), $iNow, $sKey);
+			return $bOk ? array('ok', self::recordSuccess($a, null)) : array('wrong', self::recordFailure($a, $iNow));
+		}
 		if (\strlen($sCode) === self::BACKUP_DIGITS && \ctype_digit($sCode)) {
 			$aSpent = self::spendBackupCode($a, $sCode, $sKey);
 			return null === $aSpent

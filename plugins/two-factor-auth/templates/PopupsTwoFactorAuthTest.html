@@ -11,6 +11,9 @@
 	</div>
 </div>
 <footer>
+	<a class="btn twofactor-email-reauth" data-bind="visible: emailAvailable, command: emailCommand">
+		<span data-i18n="PLUGIN_2FA/BUTTON_EMAIL_CODE"></span>
+	</a>
 	<a class="btn" data-bind="visible: keyAvailable, command: useKeyCommand">
 		<span data-i18n="PLUGIN_2FA/BUTTON_USE_PASSKEY"></span>
 	</a>

@@ -11,11 +11,13 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 {
 	const
 		NAME     = 'Two Factor Authentication',
-		VERSION  = '2.32.0',
-		RELEASE  = '2026-10-26',
+		VERSION  = '2.33.0',
+		RELEASE  = '2026-11-05',
 		REQUIRED = '2.36.0',
 		CATEGORY = 'Login',
-		DESCRIPTION = 'Provides support for TOTP 2FA and security keys / passkeys (WebAuthn) as a second factor',
+		DESCRIPTION = 'Provides support for TOTP 2FA, security keys / passkeys (WebAuthn) and a code sent to the verified recovery address as a second factor',
+		// The additional message when changing the recovery address lacks a current second factor (2.33.0).
+		PROOF_REQUIRED = 'TwoFactorProofRequired',
 		// The additional message of the refusal when the code is missing.
 		CODE_REQUIRED = 'TwoFactorCodeRequired',
 		// The additional message when a protected account is refused as an additional one.
@@ -43,7 +45,8 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 		 */
 		SETUP_ALLOWED_ACTIONS = 'DoFolders DoLogout DoPluginGetTwoFactorInfo DoPluginCreateTwoFactorSecret'
 			. ' DoPluginShowTwoFactorSecret DoPluginVerifyTwoFactorCode DoPluginEnableTwoFactor DoPluginClearTwoFactorInfo'
-			. ' DoPluginWebAuthnCreateOptions DoPluginWebAuthnRegister DoPluginConfirmBackupCodes DoPluginCancelPendingCodes',
+			. ' DoPluginWebAuthnCreateOptions DoPluginWebAuthnRegister DoPluginConfirmBackupCodes DoPluginCancelPendingCodes'
+			. ' DoPluginEmailCodeRequest DoPluginEmailCodeEnable',
 		/**
 		 * The services (first segment of ?/<Service>/...) such an account may
 		 * reach. Measured: AppData, Plugins, Json. Css and Lang serve code,
@@ -96,6 +99,11 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 		$this->addJsonHook('ConfirmBackupCodes', 'DoConfirmBackupCodes');
 		$this->addJsonHook('CancelPendingCodes', 'DoCancelPendingCodes');
 		$this->addJsonHook('RegenerateBackupCodes', 'DoRegenerateBackupCodes');
+		// 2.33.0: a code sent to the verified recovery address.
+		$this->addJsonHook('EmailCodeLoginRequest', 'DoEmailCodeLoginRequest');
+		$this->addJsonHook('EmailCodeRequest', 'DoEmailCodeRequest');
+		$this->addJsonHook('EmailCodeEnable', 'DoEmailCodeEnable');
+		$this->addJsonHook('EmailCodeDisable', 'DoEmailCodeDisable');
 
 		$this->addTemplate('templates/TwoFactorAuthSettings.html');
 		$this->addTemplate('templates/PopupsTwoFactorAuthTest.html');
@@ -173,6 +181,12 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 				->SetType(\RainLoop\Enumerations\PluginPropertyType::SELECTION)
 				->SetDescription('refuse: the sign-in is refused (a counter that does not grow may mean a cloned key). warn: accepted and logged.')
 				->SetDefaultValue(array('refuse', 'warn')),
+			// 2.33.0
+			\RainLoop\Plugins\Property::NewInstance("email_code_dir")
+				->SetLabel('Code by the recovery address: directory shared with the console')
+				->SetType(\RainLoop\Enumerations\PluginPropertyType::STRING)
+				->SetDescription('The formules directory the administration console writes (etat/) and reads (codes/). Empty: the code by email is not offered. The console mails the code to the VERIFIED recovery address only, never to one on the account domain.')
+				->SetDefaultValue(''),
 		];
 	}
 
@@ -185,6 +199,8 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 			// 2.31.0: the login screen offers a security key whenever keys are on
 			// for this webmail — for every visitor, so it says nothing of anyone.
 			$aResult['TwoFactorKeyLogin'] = null !== $this->webAuthnConf();
+			// 2.33.0: likewise, the code by email is offered to every visitor.
+			$aResult['TwoFactorEmailLogin'] = '' !== $this->emailCodeDir();
 			if (!empty($aResult['Auth'])) {
 				$oAccount = $this->getMainAccountFromToken();
 				// Per tenant (2.26.0): a domain in the list is held to the
@@ -254,6 +270,9 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 	public function FilterActionParams($sMethodName, $aParams = null) : void
 	{
 		$sMethodName = (string) $sMethodName;
+		if (0 === \strcasecmp($sMethodName, 'DoPluginFormuleSecours')) {
+			$this->guardRecoveryChange(\is_array($aParams) ? $aParams : array());
+		}
 		if ($this->setupAllows('setup_allowed_actions', self::SETUP_ALLOWED_ACTIONS, $sMethodName)
 		 || !$this->setupRequired()) {
 			return;
@@ -524,7 +543,8 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 			$oProvider = $this->TwoFactorAuthProvider($oAccount);
 			$bTotp = !empty($aRecord['Enable']);
 			return TwoFactorRecord::check($aRecord, $sCode, $this->recordKey(), \time(),
-				fn (string $sSecret, string $s) => $bTotp ? $oProvider->MatchingSlice($sSecret, $s) : null);
+				fn (string $sSecret, string $s) => $bTotp ? $oProvider->MatchingSlice($sSecret, $s) : null,
+				array('b' => $this->loginBinding(), 'p' => 'login'));
 		};
 		$aRecord = $this->loadRecord($oAccount);
 		if (!$aRecord) {
@@ -763,7 +783,7 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 		}
 		$sOutcome = '' !== $sAssertion
 			? $this->checkAssertion($oAccount, $sAssertion, 'login', $this->loginBinding())
-			: $this->checkCode($oAccount, $aRecord, $sCode);
+			: $this->checkCode($oAccount, $aRecord, $sCode, false, array('b' => $this->loginBinding(), 'p' => 'login'));
 		if ('ok' !== $sOutcome) {
 			// The failure goes to the auth log as well, which fail2ban reads.
 			$this->logAuthFailure($oAccount, $sOutcome);
@@ -1166,11 +1186,13 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 	}
 
 	/** Runs $f under the account's lock; null when the lock could not be had. */
-	protected function underLock(MainAccount $oAccount, callable $f)
+	/** @param MainAccount|string $oAccount */
+	protected function underLock($oAccount, callable $f)
 	{
 		$rLock = $this->lockRecord($oAccount);
 		if (!$rLock) {
-			$this->Logger()->Write("TFA: busy for {$oAccount->Email()}");
+			$sWho = $oAccount instanceof MainAccount ? $oAccount->Email() : (string) $oAccount;
+			$this->Logger()->Write("TFA: busy for {$sWho}");
 			return null;
 		}
 		try {
@@ -1291,10 +1313,16 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 	 */
 	protected function proveSecondFactor(MainAccount $oAccount) : string
 	{
-		$sAssertion = \trim((string) $this->jsonParam('Assertion', ''));
+		return $this->proveWith($oAccount, (string) $this->jsonParam('Code', ''), (string) $this->jsonParam('Assertion', ''));
+	}
+
+	/** The same, from given values: a key's assertion, else a code (TOTP, backup, or one sent by email for 'reauth'). */
+	protected function proveWith(MainAccount $oAccount, string $sCode, string $sAssertion) : string
+	{
+		$sAssertion = \trim($sAssertion);
 		return '' !== $sAssertion
 			? $this->checkAssertion($oAccount, $sAssertion, 'reauth', $this->sessionBinding())
-			: $this->checkCode($oAccount, array(), (string) $this->jsonParam('Code', ''));
+			: $this->checkCode($oAccount, array(), $sCode, false, array('b' => $this->sessionBinding(), 'p' => 'reauth'));
 	}
 
 	/** A key's name as the person typed it: no control or bidi-override characters, 64 at most. */
@@ -1583,6 +1611,328 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 		return false;
 	}
 
+	/* ---- 2.33.0: a code sent to the verified recovery address ---- */
+
+	/** Sends per address at the login screen, in an hour: our SMTP must not shell someone's mailbox. */
+	const EMAIL_IP_SENDS = 10;
+
+	/**
+	 * The directory shared with the administration console (SnappyMail-formule's
+	 * "formules"): the console writes etat/<sha256(address)>.json, which says
+	 * the recovery address and whether it is verified, and mails what is put
+	 * in codes/. '' when this webmail does not offer the code by email.
+	 */
+	protected function emailCodeDir() : string
+	{
+		$sDir = \rtrim(\trim((string) $this->Config()->Get('plugin', 'email_code_dir', '')), '/');
+		return '' !== $sDir && \is_dir($sDir . '/etat') ? $sDir : '';
+	}
+
+	/**
+	 * The recovery address the console verified for this account, or ''.
+	 * An unverified one is no way in: a typo would send the codes to a
+	 * stranger. Nor one on the account's own domain: whoever holds that
+	 * domain would hold both.
+	 */
+	protected function recoveryAddress(string $sEmail) : string
+	{
+		$sDir = $this->emailCodeDir();
+		if ('' === $sDir || '' === $sEmail) {
+			return '';
+		}
+		$a = \json_decode((string) @\file_get_contents($sDir . '/etat/' . \hash('sha256', \strtolower(\trim($sEmail))) . '.json'), true);
+		$x = \is_array($a) ? ($a['secours'] ?? null) : null;
+		if (!\is_array($x) || true !== ($x['verifiee'] ?? null) || !\is_string($x['secours'] ?? null)) {
+			return '';
+		}
+		return static::recoveryUsable($sEmail, $x['secours']) ? \strtolower(\trim($x['secours'])) : '';
+	}
+
+	/** A well-formed address, on another domain than the account's. */
+	public static function recoveryUsable(string $sEmail, string $sRecovery) : bool
+	{
+		$sRecovery = \strtolower(\trim($sRecovery));
+		$fDomain = fn (string $s) : string => \strtolower((string) \substr((string) \strrchr(\trim($s), '@'), 1));
+		return false !== \filter_var($sRecovery, FILTER_VALIDATE_EMAIL)
+			&& '' !== $fDomain($sEmail) && $fDomain($sRecovery) !== $fDomain($sEmail);
+	}
+
+	/** f•••@example.com */
+	public static function maskAddress(string $sAddress) : string
+	{
+		$i = \strrpos($sAddress, '@');
+		return false === $i ? '' : \mb_substr(\substr($sAddress, 0, $i), 0, 1) . '•••' . \substr($sAddress, $i);
+	}
+
+	/** Whether this browser's address may ask for one more code this hour (counted, under a lock). */
+	protected function ipAllows() : bool
+	{
+		$sDir = $this->emailCodeDir() . '/codes-debit';
+		if (!\is_dir($sDir) && !@\mkdir($sDir, 0750)) {
+			return false;
+		}
+		$sIp = '';
+		try {
+			$sIp = (string) $this->Manager()->Actions()->Http()->GetClientIp(
+				(bool) \RainLoop\Api::Config()->Get('labs', 'http_client_ip_check_proxy', false));
+		} catch (\Throwable $oError) {
+		}
+		// An IPv6 address counts by its /64: one host has billions.
+		if (\str_contains($sIp, ':') && false !== ($sBin = @\inet_pton($sIp))) {
+			$sIp = \bin2hex(\substr($sBin, 0, 8));
+		}
+		$sFile = $sDir . '/' . \substr(\hash_hmac('sha256', 'ip|' . $sIp, $this->recordKey()), 0, 32);
+		$rF = @\fopen($sFile, 'c+');
+		if (!$rF || !\flock($rF, LOCK_EX)) {
+			$rF && \fclose($rF);
+			return false;
+		}
+		try {
+			$iNow = \time();
+			$aT = \json_decode((string) \stream_get_contents($rF), true);
+			$aT = \array_values(\array_filter(\is_array($aT) ? $aT : array(), fn ($t) => \is_int($t) && $t > $iNow - 3600));
+			if (\count($aT) >= self::EMAIL_IP_SENDS) {
+				return false;
+			}
+			$aT[] = $iNow;
+			\ftruncate($rF, 0);
+			\rewind($rF);
+			\fwrite($rF, (string) \json_encode($aT));
+			return true;
+		} finally {
+			\flock($rF, LOCK_UN);
+			\fclose($rF);
+		}
+	}
+
+	/**
+	 * The code, put in the queue the console reads (codes/*.json, which
+	 * wakes sky-manager-alias.path). The console looks the verified address
+	 * up itself, mails it and deletes the file. Written aside, then renamed:
+	 * the console never reads half a file.
+	 */
+	protected function queueEmailCode(string $sEmail, string $sCode) : bool
+	{
+		$sDir = $this->emailCodeDir() . '/codes';
+		if (!\is_dir($sDir) && !@\mkdir($sDir, 0750)) {
+			return false;
+		}
+		$sLang = 'fr';
+		try {
+			$sLang = \strtolower(\substr((string) $this->Manager()->Actions()->GetLanguage(), 0, 2));
+		} catch (\Throwable $oError) {
+		}
+		$sFile = $sDir . '/' . \bin2hex(\random_bytes(12)) . '.json';
+		$iMask = \umask(0077);
+		try {
+			return false !== @\file_put_contents($sFile . '.tmp', (string) \json_encode(array(
+					'adresse' => \strtolower(\trim($sEmail)), 'code' => $sCode,
+					'langue' => \in_array($sLang, array('fr', 'en', 'ar'), true) ? $sLang : 'fr', 'date' => \time())))
+				&& @\rename($sFile . '.tmp', $sFile);
+		} finally {
+			\umask($iMask);
+		}
+	}
+
+	/**
+	 * One code for $sEmail, for this browser and purpose: 'sent', or why not
+	 * ('none', 'limit', 'busy', 'queue'). For a login the factor must be on;
+	 * nothing is written for an account without it.
+	 */
+	protected function issueEmailCode(string $sEmail, string $sBinding, string $sPurpose) : string
+	{
+		if ('' === $sBinding || '' === $this->recoveryAddress($sEmail)) {
+			return 'none';
+		}
+		$sCode = TwoFactorRecord::newEmailCode();
+		$sKey = $this->recordKey();
+		$sOutcome = $this->underLock($sEmail, function () use ($sEmail, $sBinding, $sPurpose, $sCode, $sKey) {
+			$aRecord = $this->loadRecordFor($sEmail);
+			if (!$aRecord) {
+				if ('enroll' !== $sPurpose) {
+					return 'none';
+				}
+				$aRecord = TwoFactorRecord::blank($sEmail);
+			}
+			if ('enroll' === $sPurpose ? !empty($aRecord['EmailOn']) : empty($aRecord['EmailOn'])) {
+				return 'none';
+			}
+			$iNow = \time();
+			if (!TwoFactorRecord::emailSendAllowed($aRecord, $iNow)) {
+				return 'limit';
+			}
+			return $this->saveRecord($sEmail, TwoFactorRecord::addEmailCode($aRecord, $sCode, $sBinding, $sPurpose, $iNow, $sKey))
+				? 'ok' : 'busy';
+		}) ?? 'busy';
+		if ('ok' !== $sOutcome) {
+			return $sOutcome;
+		}
+		return $this->queueEmailCode($sEmail, $sCode) ? 'sent' : 'queue';
+	}
+
+	/**
+	 * At the login screen, before any password: "send me a code". Anyone may
+	 * ask, for any address, so the answer is the same in every case, after
+	 * the same wait — it must not tell who has this factor, nor whether the
+	 * account exists. The masked address is NOT shown here, for that reason.
+	 * Sends are capped per account (3 in 15 min, 10 a day) and per address
+	 * (10 an hour), and the code is bound to this browser.
+	 */
+	public function DoEmailCodeLoginRequest() : array
+	{
+		$fStart = \microtime(true);
+		$bOffered = '' !== $this->emailCodeDir();
+		$sOutcome = 'off';
+		if ($bOffered) {
+			$sBinding = $this->loginBinding();
+			$sEmail = $this->loginEmail((string) $this->jsonParam('Email', ''));
+			$sOutcome = 'none';
+			if ('' !== $sEmail && '' !== $sBinding) {
+				if (!$this->ipAllows()) {
+					$sOutcome = 'ip-limit';
+				} else {
+					try {
+						$sOutcome = $this->issueEmailCode($sEmail, $sBinding, 'login');
+					} catch (\Throwable $oError) {
+						$sOutcome = 'error';
+					}
+				}
+			}
+			$this->Logger()->Write("TFA: email code at login: {$sOutcome}" . ('' !== $sEmail ? " for {$sEmail}" : ''));
+		}
+		$fLeft = 1.0 + \random_int(0, 300) / 1000 - (\microtime(true) - $fStart);
+		0 < $fLeft && \usleep((int) ($fLeft * 1000000));
+		return $this->jsonResponse(__FUNCTION__, $bOffered);
+	}
+
+	/**
+	 * In the session: a code to switch the factor on ('enroll') or to confirm
+	 * what weakens the second factor ('reauth'). The session may know the
+	 * outcome; the address is shown masked.
+	 */
+	public function DoEmailCodeRequest() : array
+	{
+		$oAccount = $this->getMainAccountFromToken();
+		$sPurpose = 'reauth' === (string) $this->jsonParam('Purpose', '') ? 'reauth' : 'enroll';
+		$sOutcome = $this->issueEmailCode($oAccount->Email(), $this->sessionBinding(), $sPurpose);
+		$this->Logger()->Write("TFA: email code ({$sPurpose}) {$sOutcome} for {$oAccount->Email()}");
+		return $this->jsonResponse(__FUNCTION__, array('Sent' => 'sent' === $sOutcome, 'Reason' => $sOutcome));
+	}
+
+	/**
+	 * Switches the factor on with the code just received (EmailCode). When
+	 * a second factor is already on, a current one is required too (Code or
+	 * Assertion): a stolen session must not add a way in. When it is the
+	 * first factor, backup codes are shown and the factor waits for one of
+	 * them to be retyped (2.32.0's proof): a recovery mailbox lost later must
+	 * not lock the account.
+	 */
+	public function DoEmailCodeEnable() : array
+	{
+		$oAccount = $this->getMainAccountFromToken();
+		$sBinding = $this->sessionBinding();
+		$sKey = $this->recordKey();
+		$aRecord = $this->loadRecord($oAccount);
+		if (!$aRecord || '' === $sBinding || !empty($aRecord['EmailOn']) || '' === $this->recoveryAddress($oAccount->Email())) {
+			return $this->jsonResponse(__FUNCTION__, false);
+		}
+		$bWasOn = TwoFactorRecord::isOn($aRecord, $sKey);
+		if ($bWasOn && 'ok' !== $this->proveSecondFactor($oAccount)) {
+			return $this->jsonResponse(__FUNCTION__, false);
+		}
+		$mCode = $this->jsonParam('EmailCode', '');
+		$sCode = \is_string($mCode) ? \trim($mCode) : '';
+		$aCodes = array();
+		$sOutcome = $this->underLock($oAccount, function () use ($oAccount, $sCode, $sBinding, $sKey, &$aCodes) {
+			$aRecord = $this->loadRecord($oAccount);
+			if (!$aRecord) {
+				return 'none';
+			}
+			if (TwoFactorRecord::EMAIL_DIGITS !== \strlen($sCode)) {
+				// Only a code sent by email switches it on, never a TOTP or a backup code.
+				return 'wrong';
+			}
+			$iNow = \time();
+			[$sJudged, $aNext] = TwoFactorRecord::check($aRecord, $sCode, $sKey, $iNow, fn () => null,
+				array('b' => $sBinding, 'p' => 'enroll'));
+			if ('ok' !== $sJudged) {
+				$this->saveRecord($oAccount, $aNext);
+				return $sJudged;
+			}
+			if (TwoFactorRecord::hasFactor($aNext, $sKey)) {
+				$aNext['EmailOn'] = true;
+				return $this->saveRecord($oAccount, $aNext) ? 'ok' : 'busy';
+			}
+			$aCodes = TwoFactorRecord::newBackupCodes();
+			return $this->saveRecord($oAccount, TwoFactorRecord::startPending($aNext, $aCodes, null, $sBinding, $iNow, $sKey, true))
+				? 'pending' : 'busy';
+		}) ?? 'busy';
+		$this->Logger()->Write("TFA: email code enrolment {$sOutcome} for {$oAccount->Email()}");
+		if ('ok' !== $sOutcome && 'pending' !== $sOutcome) {
+			return $this->jsonResponse(__FUNCTION__, false);
+		}
+		$aInfo = $this->getTwoFactorInfo($oAccount, true);
+		// The only time these backup codes are shown.
+		$aCodes && $aInfo['BackupCodes'] = \implode(' ', $aCodes);
+		return $this->jsonResponse(__FUNCTION__, $aInfo);
+	}
+
+	/** Switches it off: a current second factor is required (Code — possibly one sent by email for 'reauth' — or Assertion). */
+	public function DoEmailCodeDisable() : array
+	{
+		$oAccount = $this->getMainAccountFromToken();
+		$aRecord = $this->loadRecord($oAccount);
+		$sKey = $this->recordKey();
+		if (!$aRecord || empty($aRecord['EmailOn']) || 'ok' !== $this->proveSecondFactor($oAccount)) {
+			return $this->jsonResponse(__FUNCTION__, false);
+		}
+		$bNowOn = null;
+		$bDone = $this->underLock($oAccount, function () use ($oAccount, $sKey, &$bNowOn) {
+			$aRecord = $this->loadRecord($oAccount);
+			if (!$aRecord) {
+				return false;
+			}
+			unset($aRecord['EmailOn'], $aRecord['EmailCodes']);
+			$bNowOn = TwoFactorRecord::isOn($aRecord, $sKey);
+			return $this->saveRecord($oAccount, $aRecord);
+		});
+		$bDone && false === $bNowOn && $this->appPasswordsRequired($oAccount, false);
+		$this->Logger()->Write('TFA: email code ' . ($bDone ? 'switched off' : 'not switched off') . " for {$oAccount->Email()}");
+		return $this->jsonResponse(__FUNCTION__, $bDone ? $this->getTwoFactorInfo($oAccount, true) : false);
+	}
+
+	/**
+	 * Changing the recovery address (SnappyMail-formule's FormuleSecours)
+	 * asks for a current second factor once one is on: the codes go there,
+	 * so a stolen session that could replace it would take the account.
+	 * Read from the action's own parameters (Code, Assertion), which the
+	 * core has not stored yet when this filter runs.
+	 */
+	protected function guardRecoveryChange(array $aParams) : void
+	{
+		$oAccount = $this->currentMainAccount();
+		if (!$oAccount) {
+			return;
+		}
+		try {
+			$aRecord = $this->loadRecord($oAccount);
+		} catch (\Throwable $oError) {
+			$aRecord = null;
+			$bUnreadable = true;
+		}
+		if (empty($bUnreadable) && (!$aRecord || !TwoFactorRecord::isOn($aRecord, $this->recordKey()))) {
+			return;
+		}
+		$sCode = \is_string($aParams['Code'] ?? null) ? $aParams['Code'] : '';
+		$sAssertion = \is_string($aParams['Assertion'] ?? null) ? $aParams['Assertion'] : '';
+		if (empty($bUnreadable) && ('' !== \trim($sCode) || '' !== \trim($sAssertion))
+			&& 'ok' === $this->proveWith($oAccount, $sCode, $sAssertion)) {
+			return;
+		}
+		$this->Logger()->Write("TFA: recovery address change refused for {$oAccount->Email()}, no current second factor");
+		throw new ClientException(\RainLoop\Notifications::ClientViewError, null, self::PROOF_REQUIRED);
+	}
+
 	/* ---- the record ---- */
 
 	protected function recordKey() : string
@@ -1608,13 +1958,15 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 		);
 		$mData = $sData ? static::DecodeKeyValues($sData) : array();
 		if (empty($mData['User']) || $sEmail !== $mData['User']
-			|| (empty($mData['Secret']) && empty($mData['SecretBox']) && empty($mData['PasskeysBox']) && empty($mData['UserHandle']))) {
+			|| (empty($mData['Secret']) && empty($mData['SecretBox']) && empty($mData['PasskeysBox']) && empty($mData['UserHandle'])
+				&& empty($mData['EmailOn']) && empty($mData['EmailCodes']) && empty($mData['Pending']))) {
 			return null;
 		}
 		return TwoFactorRecord::normalise($mData, $this->recordKey());
 	}
 
-	protected function saveRecord(MainAccount $oAccount, array $aRecord) : bool
+	/** @param MainAccount|string $oAccount the account, or its address before login (2.33.0) */
+	protected function saveRecord($oAccount, array $aRecord) : bool
 	{
 		return $this->StorageProvider()->Put($oAccount,
 			\RainLoop\Providers\Storage\Enumerations\StorageType::CONFIG,
@@ -1638,7 +1990,7 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 	 * that one existed; the one under the lock decides.
 	 * A lock that cannot be taken refuses: "busy" is not "ok".
 	 */
-	protected function checkCode(MainAccount $oAccount, array $aRecord, string $sCode, bool $bMarkTested = false) : string
+	protected function checkCode(MainAccount $oAccount, array $aRecord, string $sCode, bool $bMarkTested = false, ?array $aEmail = null) : string
 	{
 		$rLock = $this->lockRecord($oAccount);
 		if (!$rLock) {
@@ -1656,7 +2008,7 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 			// tested is not a second factor yet (2.28.0); backup codes are.
 			$bTotp = $bMarkTested || !empty($aRecord['Enable']);
 			[$sOutcome, $aNew] = TwoFactorRecord::check($aRecord, $sCode, $this->recordKey(), \time(),
-				fn (string $sSecret, string $s) => $bTotp ? $oProvider->MatchingSlice($sSecret, $s) : null);
+				fn (string $sSecret, string $s) => $bTotp ? $oProvider->MatchingSlice($sSecret, $s) : null, $aEmail);
 			if ('ok' === $sOutcome && $bMarkTested) {
 				$aNew['Tested'] = true;
 			}
@@ -1672,7 +2024,7 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 	}
 
 	/** The lock file sits next to the record, in the account's own directory. */
-	protected function lockPath(MainAccount $oAccount) : string
+	protected function lockPath($oAccount) : string
 	{
 		$sDir = (string) $this->StorageProvider()->GenerateFilePath($oAccount,
 			\RainLoop\Providers\Storage\Enumerations\StorageType::CONFIG, true);
@@ -1680,7 +2032,7 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 	}
 
 	/** @return resource|null the held lock, or null when it could not be had in time */
-	protected function lockRecord(MainAccount $oAccount)
+	protected function lockRecord($oAccount)
 	{
 		$sPath = $this->lockPath($oAccount);
 		if ('' === $sPath || \is_link($sPath)) {
@@ -1752,6 +2104,12 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 			'Pending' => null !== $aPending,
 			'PendingAsk' => $aPending ? ((int) ($aPending['ask'] ?? 0)) + 1 : 0,
 			'PendingKey' => $aPending ? '' !== (string) ($aPending['kb'] ?? '') : false,
+			// 2.33.0: the code by the recovery address. The address only masked,
+			// and only here, in the session — never at the login screen.
+			'PendingEmail' => $aPending ? !empty($aPending['em']) : false,
+			'EmailOffered' => '' !== $this->emailCodeDir(),
+			'EmailMasked' => '' === ($sRecovery = $this->recoveryAddress($oAccount->Email())) ? '' : static::maskAddress($sRecovery),
+			'EmailOn' => $aRecord ? !empty($aRecord['EmailOn']) : false,
 			'BackupLeft' => $aRecord ? \count((array) ($aRecord['BackupHashes'] ?? array())) : 0,
 			'WebAuthn' => null !== $aConf,
 			'MaxPasskeys' => $aConf ? $aConf['max'] : 0,

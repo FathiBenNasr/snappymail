@@ -1,5 +1,35 @@
 # two-factor-auth — TODO
 
+## 5 novembre 2026 — 2.33.0 : le code par l'adresse de secours (TODO de la suite §91 point 1)
+
+* **Demandé par le propriétaire** : *« pour smail et ses autres domaines hébergés : autoriser le deuxième facteur
+  d'authentification à être un code reçu sur l'email de secours »*. Conception et vecteurs : TODO de la suite §91.
+* **Fait.** Facteur `EmailOn` ; code de 8 chiffres (`TwoFactorRecord::EMAIL_*`), empreinte HMAC seulement, lié au
+  navigateur et à l'usage (`login`, `reauth`, `enroll`), 10 min, usage unique, au plus 3 en vie, 5 faux essais les
+  jettent. Plafonds : 3/15 min et 10/jour par compte, 10/h par adresse IP (dossier `codes-debit/`, verrou).
+* **Le greffon n'envoie rien et ne garde aucune adresse** : il lit `etat/<sha256>.json` (écrit par la console),
+  dépose `{adresse du compte, code, langue, date}` dans `codes/` (écrit à côté puis renommé), et la console
+  (`alias:traiter`, réveillée par `sky-manager-alias.path`) relit l'adresse vérifiée, refuse celle du domaine du
+  compte, envoie depuis `notifications@` et efface la demande.
+* **Écran de connexion** : bouton offert à tout visiteur (`TwoFactorEmailLogin`, réglage seul) ; réponse identique
+  pour tout compte, après ≥ 1 s ; rien n'est écrit pour un compte sans ce facteur ; **pas d'adresse masquée avant
+  le mot de passe** (elle dirait qui a ce facteur). Le code est jugé avant le mot de passe, comme le TOTP.
+* **Réglages** : adresse masquée, activation par un code reçu ; premier facteur → codes de secours prouvés
+  (`Pending.em`) ; déjà protégé → un facteur courant est exigé en plus ; désactiver exige un facteur courant (un
+  code « reauth » par courriel convient, bouton dans la fenêtre de preuve).
+* **Garde ajoutée** : `DoPluginFormuleSecours` (changer l'adresse de secours) exige un facteur courant (`Code`,
+  `Assertion`) dès qu'un second facteur est actif — lu dans les paramètres de l'action, le cœur ne les ayant pas
+  encore posés quand `filter.action-params` tourne. SnappyMail-formule 0.14.0 envoie le champ.
+* Essais : PHP Actions **344** (303 en 2.32.0), Record **93** (72), WebAuthn 92 ; JS **57** (51).
+  Mutations : **29/29 PHP** et **7/7 JS** tuées. ⚠️ Deux étaient d'abord « vivantes » : l'une était un vrai trou
+  (compte à TOTP seul : aucun test de la demande avant mot de passe), l'autre un **arrêt fatal** du test
+  (`explode(null)` sous `strict_types`) que l'outil compte comme survivant — test rendu robuste.
+* **Pas vérifié** : banc navigateur (pas de banc pour ce parcours), envoi réel par la console (aucun essai en
+  production), rendu sur téléphone. Les comptes des domaines hébergés n'ont pas encore d'adresse de secours
+  (la console n'en pose que pour `@smail.tn`).
+* **Déploiement** : `email_code_dir` à poser sur webmail.smail.tn seulement
+  (`/var/www/vhosts/webmail.smail.tn/htdocs/data/_data_/_default_/formules`) ; fastmail reste éteint.
+
 ## 28 octobre 2026 — 2.32.0 déployée sur les deux webmails
 
 À la demande du propriétaire. Procédure du README (« Deploying ») : sauvegardes

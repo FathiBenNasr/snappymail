@@ -88,6 +88,17 @@ Proved on banc-smail:
 * `BANC=cle`: two logins without a factor, 0 failures counted, then the key
   logs in.
 
+## A code sent to the recovery address (2.33.0)
+
+The plugin never sends mail and never keeps the address. It reads the verified recovery address the console
+publishes, queues `{account, 8-digit code, language}` in `codes/`, and `sky-manager-alias.path` wakes the console,
+which looks the verified address up again, refuses one on the account's domain, mails the code from
+`notifications@` and deletes the request. The record keeps a keyed hash of the code, bound to the browser's
+connection token and to a purpose (`login`, `reauth`, `enroll`), for 10 minutes. At the login screen the request
+answers the same for every address after the same wait (no masked address there), and nothing is written for an
+account without the factor. Changing the recovery address (`DoPluginFormuleSecours`) needs a current factor once
+one is on.
+
 ## Settings (admin panel → plugin)
 
 | Setting | Default | |
@@ -101,6 +112,7 @@ Proved on banc-smail:
 | `webauthn_max_passkeys` | 10 | per account (1–50) |
 | `webauthn_challenge_ttl` | 300 | seconds (30–3600); each challenge is used once |
 | `webauthn_counter_regression` | refuse | `refuse` or `warn` when a key's signature counter goes back |
+| `email_code_dir` | empty | (2.33.0) the `formules` directory shared with the administration console: it writes `etat/<sha256>.json` (the recovery address and whether it is verified) and mails what the plugin queues in `codes/`. Empty: the code by email is off |
 
 Verified on the server, without any third-party library
 (`providers/webauthn.php`): ES256, RS256 (2048–4096 bits), EdDSA (Ed25519, with

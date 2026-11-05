@@ -97,6 +97,30 @@ remplacement.
 **Résultat :** vous êtes connecté, et ce code ne servira plus. Le nombre de codes qui restent s'affiche dans
 **Codes de secours restants**.
 
+## Recevoir le code sur son adresse de secours
+
+**À quoi ça sert :** se connecter avec un code reçu par courriel, sans application à codes. C'est plus simple,
+mais moins sûr : qui lit votre boîte de secours reçoit aussi vos codes.
+
+1. Vérifiez d'abord votre adresse de secours dans **Ma formule** : elle doit être sur un autre domaine que votre
+   compte, et confirmée.
+2. Ouvrez **Réglages**, puis **Authentification en deux étapes**, section **Code par l'adresse de secours**.
+3. Cliquez sur **Envoyer un code pour l'activer**, puis tapez le code de 8 chiffres reçu et cliquez sur **Activer**.
+4. Si c'est votre premier second facteur, gardez les codes de secours affichés et confirmez-les comme dans
+   [« Garder ses codes de secours »](#garder-ses-codes-de-secours).
+
+**Résultat :** **Activé** s'affiche à côté de l'adresse masquée.
+
+## Se connecter avec un code reçu par courriel
+
+1. Sur l'écran de connexion, saisissez votre adresse, puis cliquez sur **Recevoir un code sur mon adresse de
+   secours**.
+2. Ouvrez votre boîte de secours, puis tapez le code de 8 chiffres dans **Code de vérification ou code de
+   secours**, avec votre mot de passe.
+
+**Résultat :** vous êtes connecté. Le code vaut 10 minutes, une seule fois, dans le navigateur qui l'a demandé.
+Au plus trois codes par quart d'heure : au-delà, attendez ou utilisez un code de secours.
+
 ## Régénérer ses codes de secours
 
 **À quoi ça sert :** obtenir une nouvelle liste quand vous avez utilisé presque tous vos codes, ou perdu la

@@ -21,6 +21,27 @@
 		// 2.31.0: offered from the start wherever keys are on — for every
 		// visitor, so the button says nothing about any account.
 		keyLogin = () => !!(rl.settings.get('TwoFactorKeyLogin') && webauthn()?.supported()),
+		// 2.33.0: the code by the recovery address, offered to every visitor
+		// wherever this webmail has it — the button says nothing of anyone.
+		emailLogin = () => !!rl.settings.get('TwoFactorEmailLogin'),
+		askEmailCode = button => {
+			const email = String(dom('input[name=Email]')?.value || '').trim();
+			if (!email) {
+				loginView.submitError(rl.i18n('PLUGIN_2FA/ERROR_EMAIL_FOR_CODE'));
+				dom('input[name=Email]')?.focus();
+				return;
+			}
+			button.disabled = true;
+			// One request a minute from this screen; the server caps the rest.
+			setTimeout(() => button.disabled = false, 60000);
+			rl.pluginRemoteRequest(() => {
+				// The same words whatever happened: the server answers the
+				// same for every address, and so does this screen.
+				loginView.submitError(rl.i18n('PLUGIN_2FA/INFO_EMAIL_CODE_SENT'));
+				loginView.submitErrorAdditional('');
+				dom('input[name=totp_code]')?.focus();
+			}, 'EmailCodeLoginRequest', { Email: email });
+		},
 		sign = options => {
 			webauthn().get(options).then(json => {
 				const field = dom('input[name=webauthn_assertion]');
@@ -85,6 +106,14 @@
 				button.querySelector('button')?.addEventListener('click', useKey);
 				container.append(button);
 				showKey(keyLogin());
+				if (emailLogin()) {
+					const mail = Element.fromHTML('<div class="controls twofactor-email">'
+						+ '<button type="button" class="btn" data-i18n="PLUGIN_2FA/BUTTON_EMAIL_CODE">'
+						+ rl.i18n('PLUGIN_2FA/BUTTON_EMAIL_CODE') + '</button></div>');
+					const b = mail.querySelector('button');
+					b?.addEventListener('click', () => askEmailCode(b));
+					container.append(mail);
+				}
 			}
 		}
 	});

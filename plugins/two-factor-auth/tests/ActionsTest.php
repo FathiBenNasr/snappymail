@@ -37,6 +37,10 @@ namespace RainLoop { class Notifications { const InvalidToken = 101; const AuthE
 			return array('email' => \str_contains($sEmail, '@') ? $sEmail : $sEmail . '@smail.tn');
 		}
 		public function SetAdditionalAuthToken($a) { $this->p && ++$this->p->additionalCleared; }
+		// 2.33.0: the client address (the per-address cap) and the language (the mail's).
+		public static string $ip = '198.51.100.7';
+		public function Http() { return new class { public function GetClientIp(bool $b = false) : string { return Actions::$ip; } }; }
+		public function GetLanguage(bool $bAdmin = false) : string { return 'ar'; }
 	}
 	class ActionsAdmin extends Actions {}
 	// The services of the core, by name only.
@@ -161,7 +165,7 @@ namespace {
 		array(\strlen($sSecret) >= 16, \str_starts_with($c['QRCode'], 'data:image/svg+xml;base64,'), \count(\explode(' ', $c['BackupCodes']))), array(true, true, 8));
 	$check('the stored record holds neither', \str_contains(\reset($p->oStore->data), $sSecret), false);
 	$aInfo = $p->DoGetTwoFactorInfo()['Result'];
-	$check('the info screen never sees secret, codes or QR', \array_keys($aInfo), array('User', 'IsSet', 'Enable', 'Tested', 'On', 'Enrolled', 'OnlyKey', 'Pending', 'PendingAsk', 'PendingKey', 'BackupLeft', 'WebAuthn', 'MaxPasskeys', 'Passkeys'));
+	$check('the info screen never sees secret, codes or QR', \array_keys($aInfo), array('User', 'IsSet', 'Enable', 'Tested', 'On', 'Enrolled', 'OnlyKey', 'Pending', 'PendingAsk', 'PendingKey', 'PendingEmail', 'EmailOffered', 'EmailMasked', 'EmailOn', 'BackupLeft', 'WebAuthn', 'MaxPasskeys', 'Passkeys'));
 	$check('… nor anything secret-shaped in its values', \preg_match('/' . \preg_quote($sSecret, '/') . '|BackupHashes|SecretBox/', \json_encode($aInfo)), 0);
 
 	$p->params = array('Enable' => '1');
@@ -958,6 +962,144 @@ namespace {
 	foreach (array($b, $u, $kb, $tw) as $x) { \is_dir($x->oStore->root) && \exec('rm -rf ' . \escapeshellarg($x->oStore->root)); }
 
 	foreach (array($d, $w, $e, $ap, $ar, $sm, $off) as $x) { \is_dir($x->oStore->root) && \exec('rm -rf ' . \escapeshellarg($x->oStore->root)); }
+
+
+	/* ---- 2.33.0: a code sent to the verified recovery address ---- */
+	$sDirE = \sys_get_temp_dir() . '/tfa-email-' . \getmypid() . '-' . \bin2hex(\random_bytes(4));
+	\mkdir($sDirE . '/etat', 0700, true);
+	$EM = array('email_code_dir' => $sDirE);
+	$secours = function (string $sCompte, ?string $sAdresse, bool $bVerifiee = true) use ($sDirE) {
+		\file_put_contents($sDirE . '/etat/' . \hash('sha256', $sCompte) . '.json',
+			\json_encode(array('formule' => 'smail', 'secours' => null === $sAdresse ? null : array('secours' => $sAdresse, 'verifiee' => $bVerifiee))));
+	};
+	$file = function () use ($sDirE) : array {
+		$aX = array();
+		foreach (\glob($sDirE . '/codes/*.json') ?: array() as $fE) { $aX[] = \json_decode((string) \file_get_contents($fE), true); \unlink($fE); }
+		return $aX;
+	};
+	$demande = function (P $x, string $sEmail) {
+		$x->fresh(); $x->request(null); $x->params = array('Email' => $sEmail);
+		$fE = \microtime(true);
+		$rE = $x->DoEmailCodeLoginRequest()['Result'];
+		return array($rE, \microtime(true) - $fE >= 1.0);
+	};
+
+	$em0 = new P();
+	$check('email code: off without a directory — the login screen is not offered it', array($em0->DoEmailCodeLoginRequest()['Result'], $em0->DoGetTwoFactorInfo()['Result']['EmailOffered']), array(false, false));
+	$aAD = array(); $em0->config = $EM; $em0->FilterAppData(false, $aAD);
+	$check('… and on with one, for every visitor (nothing about the account)', $aAD['TwoFactorEmailLogin'], true);
+
+	$em = new P(); $em->config = $EM;
+	$em->oAccount = new \RainLoop\Model\MainAccount('imen@smail.tn');
+	$secours('imen@smail.tn', 'Imen.B@Gmail.com');
+	$check('email code: the settings show the verified recovery address, masked', $em->DoGetTwoFactorInfo()['Result']['EmailMasked'], 'i•••@gmail.com');
+	[$rE, $bWait] = $demande($em, 'imen@smail.tn');
+	$check('login request for an account without the factor: the usual answer, the usual wait, nothing sent, nothing written',
+		array($rE, $bWait, $file(), $em->oStore->data), array(true, true, array(), array()));
+	[$rE] = $demande($em, 'personne@smail.tn');
+	$check('… nor for an address that does not exist (same answer)', array($rE, $file()), array(true, array()));
+
+	$secours('imen@smail.tn', 'imen@smail.tn');
+	$em->request(); $em->params = array('Purpose' => 'enroll');
+	$check('a recovery address on the account domain is no way in', $em->DoEmailCodeRequest()['Result'], array('Sent' => false, 'Reason' => 'none'));
+	$secours('imen@smail.tn', 'imen.b@gmail.com', false);
+	$check('nor an unverified one', array($em->DoEmailCodeRequest()['Result']['Sent'], $em->DoGetTwoFactorInfo()['Result']['EmailMasked']), array(false, ''));
+	$secours('imen@smail.tn', 'imen.b@gmail.com');
+	$check('enrolment: a code is sent', $em->DoEmailCodeRequest()['Result'], array('Sent' => true, 'Reason' => 'sent'));
+	$aF = $file();
+	$check('… put in the queue for the console: the account, 8 digits, the language — never the address',
+		array(\count($aF), $aF[0]['adresse'], (bool) \preg_match('/^\d{8}$/D', $aF[0]['code']), $aF[0]['langue'], isset($aF[0]['secours']), \str_contains(\json_encode($aF[0]), 'gmail')),
+		array(1, 'imen@smail.tn', true, 'ar', false, false));
+	$sCodeE = $aF[0]['code'];
+	$check('… the queue is closed to others', \fileperms($sDirE . '/codes') & 0027, 0);
+	$check('… the record keeps only a keyed hash of it', \str_contains(\json_encode($em->raw()), $sCodeE), false);
+
+	$em->params = array('EmailCode' => '00000000');
+	$check('a wrong code does not switch it on', $em->DoEmailCodeEnable()['Result'], false);
+	$em->params = array('EmailCode' => '123456');
+	$check('nor a TOTP-shaped one', $em->DoEmailCodeEnable()['Result'], false);
+	$em->binding = 'browser-2'; $em->params = array('EmailCode' => $sCodeE);
+	$check('nor the right one from another browser', $em->DoEmailCodeEnable()['Result'], false);
+	$em->binding = 'browser-1';
+	$aE = $em->DoEmailCodeEnable()['Result'];
+	$check('the right one: first factor, so backup codes are shown and wait for their proof',
+		array(\count(\array_filter(\explode(' ', (string) ($aE['BackupCodes'] ?? '')))), $aE['Pending'], $aE['PendingEmail'], $aE['On'], $aE['EmailOn']), array(8, true, true, false, false));
+	$check('… the code is spent', $em->DoEmailCodeEnable()['Result'], false);
+	$em->params = array('Code' => \explode(' ', $aE['BackupCodes'])[$aE['PendingAsk'] - 1]);
+	$aE2 = $em->DoConfirmBackupCodes()['Result'];
+	$check('proof given: the factor is on', array($aE2['On'], $aE2['EmailOn'], $aE2['Enrolled'], $aE2['BackupLeft']), array(true, true, true, 8));
+
+	// Login, before the password.
+	$check('login without a code: refused like a wrong password, before the directory', $login($em, array()), $AUTH);
+	[$rE, $bWait] = $demande($em, 'imen');
+	$aF = $file();
+	$check('login request: same answer, same wait, one code queued for the account the core resolved',
+		array($rE, $bWait, \count($aF), $aF[0]['adresse'] ?? ''), array(true, true, 1, 'imen@smail.tn'));
+	$sLoginE = $aF[0]['code'];
+	$em->binding = 'browser-9';
+	$check('the code from another browser is refused before the password', $login($em, array('totp_code' => $sLoginE)), $AUTH);
+	$em->binding = 'browser-1';
+	$check('a wrong 8-digit code too', $login($em, array('totp_code' => '00000000')), $AUTH);
+	$check('the right one lets the password through', $login($em, array('totp_code' => $sLoginE)), 'directory+ok');
+	$check('… once', $login($em, array('totp_code' => $sLoginE)), $AUTH);
+	$em->request(); $em->params = array('Purpose' => 'reauth');
+	$em->DoEmailCodeRequest(); $sReauth = $file()[0]['code'] ?? '';
+	$check('a code for "reauth" does not log in', $login($em, array('totp_code' => $sReauth)), $AUTH);
+
+	// The caps.
+	$cE = new P(); $cE->config = $EM; $cE->oAccount = new \RainLoop\Model\MainAccount('imen@smail.tn'); $cE->oStore = $em->oStore;
+	$deverrouiller($em);
+	$aRaw = $em->raw(); $aRaw['EmailSends'] = array(); $em->setRaw($aRaw);
+	for ($i = 0; $i < 4; ++$i) { $demande($cE, 'imen@smail.tn'); }
+	$check('per account: 3 codes in 15 minutes, not 4', \count($file()), 3);
+	$check('… and at most 3 live at once', \count($em->raw()['EmailCodes']), 3);
+	\RainLoop\Actions::$ip = '203.0.113.9';
+	$aRaw = $em->raw(); $aRaw['EmailSends'] = array(); $em->setRaw($aRaw);
+	for ($i = 0; $i < 12; ++$i) { $aRaw = $em->raw(); $aRaw['EmailSends'] = array(); $em->setRaw($aRaw); $demande($cE, 'imen@smail.tn'); }
+	$check('per address: 10 an hour', \count($file()), 10);
+	\RainLoop\Actions::$ip = '198.51.100.7';
+
+	// Switching off asks for a current factor; the recovery address cannot be changed without one.
+	$em->request(); $em->params = array();
+	$check('switching off without a factor is refused', $em->DoEmailCodeDisable()['Result'], false);
+	$try = function (P $x, array $aX) : string {
+		try { $x->FilterActionParams('DoPluginFormuleSecours', $aX); return 'passe'; }
+		catch (\RainLoop\Exceptions\ClientException $ex) { return $ex->getAdditionalMessage(); }
+	};
+	$check('changing the recovery address without a current factor is refused', $try($em, array('secours' => 'x@evil.example', 'mot_de_passe' => 'p')), 'TwoFactorProofRequired');
+	$check('… with a wrong code too', $try($em, array('Code' => '000000000')), 'TwoFactorProofRequired');
+	$check('… with a backup code it passes', $try($em, array('Code' => \explode(' ', $aE['BackupCodes'])[0])), 'passe');
+	try { $em->FilterActionParams('dopluginformulesecours', array()); $sCase = 'passe'; } catch (\RainLoop\Exceptions\ClientException $ex) { $sCase = $ex->getAdditionalMessage(); }
+	$check('… whatever the case of the action name', $sCase, 'TwoFactorProofRequired');
+	$nE = new P(); $nE->config = $EM;
+	$check('an account without a second factor changes it as before (password, in the other plugin)', $try($nE, array()), 'passe');
+	$deverrouiller($em);
+	$em->request(); $em->params = array('Purpose' => 'reauth');
+	$em->DoEmailCodeRequest(); $sOff = $file()[0]['code'] ?? '';
+	$em->params = array('Code' => $sOff);
+	$aOff = $em->DoEmailCodeDisable()['Result'];
+	$check('a "reauth" code by email switches it off; the account has no factor left', array($aOff['EmailOn'], $aOff['On']), array(false, false));
+
+	// Already protected by an authenticator: adding the email factor asks for it.
+	$tE = new P(); $tE->config = $EM; $tE->oAccount = new \RainLoop\Model\MainAccount('amal@smail.tn');
+	$secours('amal@smail.tn', 'amal@yahoo.fr');
+	$cT3 = $tE->DoCreateTwoFactorSecret()['Result'];
+	$tE->params = array('Code' => $previous($cT3['Secret'])); $tE->DoVerifyTwoFactorCode();
+	$tE->params = array('Enable' => '1'); $tE->DoEnableTwoFactor();
+	[$rE] = $demande($tE, 'amal@smail.tn');
+	$check('login request for an account whose factor is an authenticator only: nothing sent, nothing added', array($rE, $file(), isset($tE->raw()['EmailCodes'])), array(true, array(), false));
+	$tE->request();
+	$tE->params = array('Purpose' => 'enroll'); $tE->DoEmailCodeRequest(); $sT3 = $file()[0]['code'] ?? '';
+	$tE->params = array('EmailCode' => $sT3);
+	$check('with an authenticator on, the email code alone does not add the factor', $tE->DoEmailCodeEnable()['Result'], false);
+	$tE->params = array('Purpose' => 'enroll'); $tE->DoEmailCodeRequest(); $sT3 = $file()[0]['code'] ?? '';
+	$tE->params = array('EmailCode' => $sT3, 'Code' => $current($cT3['Secret']));
+	$aT3 = $tE->DoEmailCodeEnable()['Result'];
+	$check('… with a current code it does, at once, no new backup codes', array($aT3['EmailOn'], isset($aT3['BackupCodes']), $aT3['Pending']), array(true, false, false));
+	$check('the actions of the email enrolment are open to an account still setting up', array(\str_contains(TwoFactorAuthPlugin::SETUP_ALLOWED_ACTIONS, 'DoPluginEmailCodeRequest'), \str_contains(TwoFactorAuthPlugin::SETUP_ALLOWED_ACTIONS, 'DoPluginEmailCodeEnable'), \str_contains(TwoFactorAuthPlugin::SETUP_ALLOWED_ACTIONS, 'Disable')), array(true, true, false));
+	$check('mask: f•••@domain', array(TwoFactorAuthPlugin::maskAddress('fathi@gmail.com'), TwoFactorAuthPlugin::maskAddress('x')), array('f•••@gmail.com', ''));
+	foreach (array($em0, $em, $nE, $tE) as $x) { \is_dir($x->oStore->root) && \exec('rm -rf ' . \escapeshellarg($x->oStore->root)); }
+	\exec('rm -rf ' . \escapeshellarg($sDirE));
 
 	// The temporary storage of every double.
 	foreach (array($p, $r, $t, $a, $n, $q, $o, $w, $f, $g, $h, $k) as $x) { \is_dir($x->oStore->root) && \exec('rm -rf ' . \escapeshellarg($x->oStore->root)); }

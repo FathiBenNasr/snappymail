@@ -187,5 +187,45 @@ check('a tampered key box cannot be confirmed into the account', array(TwoFactor
 $aTamper2 = $aP; $aTamper2['Pending']['ask'] = 99;
 check('a rank out of the list matches nothing', TwoFactorRecord::confirmPending($aTamper2, $aCodesP[0], 'browser-1', 1100, $sKeyR)[0], 'wrong');
 
+/* ---- 2.33.0: a code sent to the recovery address ---- */
+$sKeyE = TwoFactorRecord::key('salt');
+$aE = TwoFactorRecord::blank('x@smail.tn');
+check('a fresh email code: 8 digits', (bool) \preg_match('/^\d{8}$/D', TwoFactorRecord::newEmailCode()), true);
+check('the email factor counts as on and as a factor', array(TwoFactorRecord::isOn($aE + array('EmailOn' => true), $sKeyE), TwoFactorRecord::hasFactor($aE + array('EmailOn' => true), $sKeyE)), array(true, true));
+$aE1 = TwoFactorRecord::addEmailCode($aE, '12345678', 'b1', 'login', 1000, $sKeyE) + array('EmailOn' => true);
+check('kept as a keyed hash only', \str_contains(\json_encode($aE1), '12345678'), false);
+$fNo = fn () => null;
+check('8 digits without an email context: wrong', TwoFactorRecord::check($aE1, '12345678', $sKeyE, 1001, $fNo)[0], 'wrong');
+check('… for login with the factor off: wrong', TwoFactorRecord::check(array('EmailOn' => false) + $aE1, '12345678', $sKeyE, 1001, $fNo, array('b' => 'b1', 'p' => 'login'))[0], 'wrong');
+[$sO, $aE2] = TwoFactorRecord::check($aE1, '12345678', $sKeyE, 1001, $fNo, array('b' => 'b1', 'p' => 'login'));
+check('right browser, purpose, time: ok, and spent', array($sO, \count($aE2['EmailCodes'])), array('ok', 0));
+check('another browser: wrong', TwoFactorRecord::check($aE1, '12345678', $sKeyE, 1001, $fNo, array('b' => 'b2', 'p' => 'login'))[0], 'wrong');
+check('another purpose: wrong', TwoFactorRecord::check($aE1, '12345678', $sKeyE, 1001, $fNo, array('b' => 'b1', 'p' => 'reauth'))[0], 'wrong');
+check('expired: wrong', TwoFactorRecord::check($aE1, '12345678', $sKeyE, 1000 + TwoFactorRecord::EMAIL_TTL, $fNo, array('b' => 'b1', 'p' => 'login'))[0], 'wrong');
+check('no browser token: wrong', TwoFactorRecord::takeEmailCode($aE1, '12345678', '', 'login', 1001, $sKeyE)[0], false);
+$aT = $aE1;
+for ($i = 0; $i < TwoFactorRecord::EMAIL_TRIES; ++$i) { [, $aT] = TwoFactorRecord::takeEmailCode($aT, '00000000', 'b1', 'login', 1001, $sKeyE); }
+check('five wrong tries discard the code of that browser', array(\count($aT['EmailCodes']), TwoFactorRecord::takeEmailCode($aT, '12345678', 'b1', 'login', 1002, $sKeyE)[0]), array(0, false));
+[, $aT2] = TwoFactorRecord::takeEmailCode($aE1, '00000000', 'b2', 'login', 1001, $sKeyE);
+check('… and tries from another browser do not count against it', $aT2['EmailCodes'][0]['n'], 0);
+$aL = $aE;
+foreach (array('11111111', '22222222', '33333333', '44444444') as $i => $c) { $aL = TwoFactorRecord::addEmailCode($aL, $c, 'b1', 'login', 1000 + $i, $sKeyE); }
+check('at most 3 live, the oldest goes', array(\count($aL['EmailCodes']), TwoFactorRecord::takeEmailCode($aL, '11111111', 'b1', 'login', 1005, $sKeyE)[0], TwoFactorRecord::takeEmailCode($aL, '44444444', 'b1', 'login', 1005, $sKeyE)[0]), array(3, false, true));
+$aS = $aE;
+$aS['EmailSends'] = array(1000, 1001);
+check('2 sends in 15 min: one more allowed', TwoFactorRecord::emailSendAllowed($aS, 1002), true);
+$aS['EmailSends'][] = 1002;
+check('3: no more', TwoFactorRecord::emailSendAllowed($aS, 1003), false);
+check('… until the window passes', TwoFactorRecord::emailSendAllowed($aS, 1000 + TwoFactorRecord::EMAIL_SENDS_WINDOW + 1), true);
+$aS['EmailSends'] = \range(10000, 10000 + 9 * 1000, 1000);
+check('10 in a day: no more, even spread out', TwoFactorRecord::emailSendAllowed($aS, 10000 + 9 * 1000 + 1000), false);
+check('… sends from the future do not count (clock set back)', TwoFactorRecord::emailSendAllowed(array('EmailSends' => array(5000, 5001, 5002)), 1000), true);
+check('the email codes are not taken for backup codes, nor these for email codes', array(\strlen(TwoFactorRecord::newBackupCodes()[0]), TwoFactorRecord::EMAIL_DIGITS), array(9, 8));
+$aPe = TwoFactorRecord::startPending($aE, array('123456789', '223456789'), null, 'b1', 1000, $sKeyE, true);
+[$sO, $aPe2] = TwoFactorRecord::confirmPending($aPe, array('123456789', '223456789')[$aPe['Pending']['ask']], 'b1', 1001, $sKeyE);
+check('confirmed pending codes switch the email factor on', array($sO, $aPe2['EmailOn'] ?? false, TwoFactorRecord::isOn($aPe2, $sKeyE)), array('ok', true, true));
+$aPn = TwoFactorRecord::startPending($aE, array('123456789'), null, 'b1', 1000, $sKeyE);
+check('… and plain regenerated codes do not', TwoFactorRecord::confirmPending($aPn, '123456789', 'b1', 1001, $sKeyE)[1]['EmailOn'] ?? false, false);
+
 echo "\n", $iFail ? "$iFail failed\n" : "0 failed\n";
 exit($iFail ? 1 : 0);

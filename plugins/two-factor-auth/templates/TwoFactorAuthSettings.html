@@ -117,6 +117,29 @@
 		<span data-i18n="PLUGIN_2FA/BUTTON_ACTIVATE"></span>
 	</a>
 
+	<!-- 2.33.0: a code sent to the verified recovery address. -->
+	<div class="b-settings-two-factor-email" data-bind="visible: emailOffered">
+		<div class="legend" data-i18n="PLUGIN_2FA/LEGEND_EMAIL_CODE"></div>
+		<p class="muted width100-on-mobile" style="width: 550px" data-i18n="PLUGIN_2FA/EMAIL_CODE_DESC"></p>
+		<p class="muted" data-bind="visible: !emailMasked()" data-i18n="PLUGIN_2FA/EMAIL_CODE_NO_ADDRESS"></p>
+		<div data-bind="visible: emailMasked">
+			<p><span data-i18n="PLUGIN_2FA/LABEL_EMAIL_ADDRESS"></span> <strong dir="ltr" style="unicode-bidi: plaintext" data-bind="text: emailMasked"></strong></p>
+			<p class="twofactor-email-on" data-bind="visible: emailOn"><strong data-i18n="PLUGIN_2FA/EMAIL_CODE_ON"></strong>
+				&nbsp; <a class="btn twofactor-email-off" data-bind="click: emailDisable" data-i18n="PLUGIN_2FA/BUTTON_EMAIL_OFF"></a></p>
+			<div data-bind="visible: !emailOn() && !pending()">
+				<a class="btn twofactor-email-send" data-bind="click: emailSend, css: {disabled: emailBusy}" data-i18n="PLUGIN_2FA/BUTTON_EMAIL_SEND"></a>
+				<div data-bind="visible: emailSent">
+					<p class="muted" data-i18n="PLUGIN_2FA/EMAIL_CODE_SENT"></p>
+					<input type="text" class="uiInput twofactor-email-code" inputmode="numeric" pattern="[0-9]*" maxlength="8"
+						autocomplete="one-time-code" dir="ltr" style="unicode-bidi: plaintext"
+						data-bind="textInput: emailCode, disable: emailBusy, onEnter: emailEnable">
+					<a class="btn btn-primary twofactor-email-enable" data-bind="click: emailEnable, css: {disabled: emailBusy}" data-i18n="PLUGIN_2FA/BUTTON_EMAIL_ENABLE"></a>
+				</div>
+			</div>
+			<div class="alert" data-bind="visible: emailError, text: emailError"></div>
+		</div>
+	</div>
+
 	<!-- 2.28.0: security keys and passkeys, a second factor next to the code. -->
 	<div class="b-settings-two-factor-keys" data-bind="visible: webauthn">
 		<div class="legend" data-i18n="PLUGIN_2FA/LEGEND_PASSKEYS"></div>

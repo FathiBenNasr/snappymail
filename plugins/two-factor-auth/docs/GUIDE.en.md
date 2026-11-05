@@ -92,6 +92,29 @@ replacement.
 **Result:** you are signed in, and that code will not work again. The number of codes left shows under
 **Backup codes left**.
 
+## Receive the code at your recovery address
+
+**What it is for:** signing in with a code received by email, without an authenticator app. It is simpler, but
+less safe: whoever reads your recovery mailbox also gets your codes.
+
+1. First check your recovery address in **My plan**: it must be on another domain than your account, and
+   confirmed.
+2. Open **Settings**, then **2-Step Verification**, section **Code by the recovery address**.
+3. Click **Send a code to switch it on**, type the 8-digit code you received and click **Switch on**.
+4. If it is your first second factor, keep the backup codes shown and confirm them as in
+   [“Keep your backup codes”](#keep-your-backup-codes).
+
+**Result:** **On** shows next to the masked address.
+
+## Sign in with a code received by email
+
+1. On the sign-in screen, type your address, then click **Send a code to my recovery address**.
+2. Open your recovery mailbox, then type the 8-digit code in **Verification code or backup code**, with your
+   password.
+
+**Result:** you are signed in. The code is valid for 10 minutes, once, in the browser that asked for it. At most
+three codes per quarter of an hour: beyond that, wait or use a backup code.
+
 ## Regenerate your backup codes
 
 **What it is for:** get a new list when you have used almost all your codes, or lost the list.

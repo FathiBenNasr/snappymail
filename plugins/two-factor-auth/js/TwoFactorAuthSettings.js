@@ -106,6 +106,15 @@ class TwoFactorAuthSettings
 		this.confirmBusy = ko.observable(false);
 		this.confirmLabel = ko.observable('');
 
+		// 2.33.0: the code by the recovery address.
+		this.emailOffered = ko.observable(false);
+		this.emailMasked = ko.observable('');
+		this.emailOn = ko.observable(false);
+		this.emailSent = ko.observable(false);
+		this.emailCode = ko.observable('');
+		this.emailBusy = ko.observable(false);
+		this.emailError = ko.observable('');
+
 		const fn = iError => iError && this.viewEnable_(false);
 		Object.entries({
 			viewEnable: {
@@ -157,7 +166,8 @@ class TwoFactorAuthSettings
 		this.onResult = this.onResult.bind(this);
 		this.onShowSecretResult = this.onShowSecretResult.bind(this);
 		['addPasskey', 'renamePasskey', 'savePasskey', 'removePasskey',
-			'savedCodes', 'confirmCodes', 'cancelPending', 'regenerateCodes', 'addAuthenticator'].forEach(m => this[m] = this[m].bind(this));
+			'savedCodes', 'confirmCodes', 'cancelPending', 'regenerateCodes', 'addAuthenticator',
+			'emailSend', 'emailEnable', 'emailDisable'].forEach(m => this[m] = this[m].bind(this));
 	}
 
 	/**
@@ -165,7 +175,7 @@ class TwoFactorAuthSettings
 	 * code popup, with "use a security key" when the account has one.
 	 */
 	prove(action, onSuccess) {
-		TwoFactorAuthTestPopupView.showModal([onSuccess || (() => {}), action, this.hasPasskeys()]);
+		TwoFactorAuthTestPopupView.showModal([onSuccess || (() => {}), action, this.hasPasskeys(), this.emailOn()]);
 	}
 
 	showSecret() {
@@ -243,6 +253,10 @@ class TwoFactorAuthSettings
 		this.backupLeft(info.BackupLeft | 0);
 		this.confirmLabel(rl.i18n('PLUGIN_2FA/LABEL_CONFIRM_CODE_N').replace('{n}', String(info.PendingAsk | 0)));
 		info.Pending || (this.confirmCode(''), this.confirmError(''));
+		this.emailOffered(!!info.EmailOffered);
+		this.emailMasked(pString(info.EmailMasked));
+		this.emailOn(!!info.EmailOn);
+		info.EmailOn && (this.emailSent(false), this.emailCode(''));
 		this.webauthn(!!info.WebAuthn);
 		this.maxPasskeys(info.MaxPasskeys | 0);
 		this.canAddPasskey(!!info.WebAuthn && info.Passkeys.length < (info.MaxPasskeys | 0));
@@ -343,6 +357,62 @@ class TwoFactorAuthSettings
 		}, 'RegenerateBackupCodes', proofOf(proof)));
 	}
 
+	/* ---- the code by the recovery address (2.33.0) ---- */
+
+	/** A code to the recovery address, to switch the factor on. */
+	emailSend() {
+		if (!authentifie() || this.emailBusy()) {
+			return;
+		}
+		this.emailBusy(true);
+		this.emailError('');
+		rl.pluginRemoteRequest((iError, oData) => {
+			this.emailBusy(false);
+			const sent = !iError && !!oData?.Result?.Sent;
+			this.emailSent(sent);
+			sent || this.emailError(rl.i18n('limit' === oData?.Result?.Reason
+				? 'PLUGIN_2FA/ERROR_EMAIL_LIMIT' : 'PLUGIN_2FA/ERROR_EMAIL_NOT_SENT'));
+		}, 'EmailCodeRequest', { Purpose: 'enroll' });
+	}
+
+	/**
+	 * The code received, typed back. Already protected: a current factor is
+	 * asked too. First factor: backup codes are shown and wait for their proof.
+	 */
+	emailEnable() {
+		const code = String(this.emailCode()).trim();
+		if (!authentifie() || this.emailBusy() || !code) {
+			return;
+		}
+		const enable = (proof, done) => {
+			this.emailBusy(true);
+			this.emailError('');
+			rl.pluginRemoteRequest((iError, oData) => {
+				this.emailBusy(false);
+				const ok = !iError && !!oData?.Result;
+				if (ok) {
+					this.emailCode('');
+					this.emailSent(false);
+					this.applyInfo(oData.Result);
+					oData.Result.BackupCodes && this.viewBackupCodes(pString(oData.Result.BackupCodes).replace(/[\s]+/g, '  '));
+				} else {
+					this.emailError(rl.i18n('PLUGIN_2FA/ERROR_EMAIL_CODE_WRONG'));
+				}
+				done && done(ok ? 0 : (iError || 1), { Result: ok });
+			}, 'EmailCodeEnable', Object.assign({ EmailCode: code }, proof ? proofOf(proof) : {}));
+		};
+		this.secondFactorOn() ? this.prove(enable) : enable();
+	}
+
+	/** Off: a current factor is asked (a code by email works too). */
+	emailDisable() {
+		this.prove((proof, done) => rl.pluginRemoteRequest((iError, oData) => {
+			const ok = !iError && !!oData?.Result;
+			ok && this.applyInfo(oData.Result);
+			done(ok ? 0 : (iError || 1), { Result: ok });
+		}, 'EmailCodeDisable', proofOf(proof)));
+	}
+
 	/** From the warning: the same path as the authenticator button of this screen. */
 	addAuthenticator() {
 		this.createTwoFactor();
@@ -434,12 +504,14 @@ class TwoFactorAuthTestPopupView extends rl.pluginPopupView {
 			code: '',
 			codeStatus: null,
 			testing: false,
-			keyAvailable: false
+			keyAvailable: false,
+			emailAvailable: false
 		});
 
 		ko.decorateCommands(this, {
 			testCodeCommand: self => self.code() && !self.testing(),
-			useKeyCommand: self => self.keyAvailable() && !self.testing()
+			useKeyCommand: self => self.keyAvailable() && !self.testing(),
+			emailCommand: self => self.emailAvailable() && !self.testing()
 		});
 	}
 
@@ -475,16 +547,23 @@ class TwoFactorAuthTestPopupView extends rl.pluginPopupView {
 		}, 'WebAuthnAssertOptions');
 	}
 
+	/** 2.33.0: a code to the recovery address, to type in the same field. */
+	emailCommand() {
+		this.emailAvailable(false);
+		rl.pluginRemoteRequest(() => {}, 'EmailCodeRequest', { Purpose: 'reauth' });
+	}
+
 	/**
 	 * @param {Function} onSuccess
 	 * @param {?Function} action fn(proof, done) — by default, test the code
 	 * @param {boolean} withKey offer "use a security key" (the account has one)
 	 */
-	onShow(onSuccess, action, withKey) {
+	onShow(onSuccess, action, withKey, withEmail) {
 		this.code('');
 		this.codeStatus(null);
 		this.testing(false);
 		this.keyAvailable(!!(withKey && action && window.TwoFactorWebAuthn && window.TwoFactorWebAuthn.supported()));
+		this.emailAvailable(!!(withEmail && action));
 		this.onSuccess = onSuccess;
 		this.action = action ? (done, proof) => action(proof, done) : (done, code) => Remote.verifyCode(done, code);
 	}
