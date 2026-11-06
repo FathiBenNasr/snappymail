@@ -1,5 +1,16 @@
 # two-factor-auth — TODO
 
+
+## 2.34.1 — 6 novembre 2026 : ordre de l'écran de connexion
+
+* Demande du propriétaire : la clé et le code par courriel en haut avec le champ du code, « Mot de passe oublié » et
+  « Créer un compte » en bas. Les liens viennent de `login-register` (amont, non modifié), qui les ajoute au même groupe
+  avant nous. Nos deux boutons se placent désormais juste après le champ du code (`placer()`, `after()`), quel que soit
+  l'ordre de chargement des greffons. Tests : JS 58 (ordre éprouvé dans les deux ordres, mutation tuée). Bancs :
+  courriel 24/24 (ordre mesuré sur banc-smail), forcer 34, avant 19, clé 70. Déployé sur les deux webmails.
+* Les liens restent au-dessus de « Se souvenir de moi » et « Se connecter » : ils appartiennent au groupe du bas que le
+  cœur place avant ces deux éléments. Les descendre sous le bouton demanderait de déplacer le nœud d'un autre greffon.
+
 ## 5 novembre 2026 — 2.33.0 : le code par l'adresse de secours (TODO de la suite §91 point 1)
 
 * **Demandé par le propriétaire** : *« pour smail et ses autres domaines hébergés : autoriser le deuxième facteur
