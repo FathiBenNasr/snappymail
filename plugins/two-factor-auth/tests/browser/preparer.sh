@@ -7,6 +7,13 @@
 #     CAPTURES=/dir sh ...                                          # screenshots of the three screens
 #     BANC=cle sh plugins/two-factor-auth/tests/browser/preparer.sh # 2.28.0: a security key (cle.js)
 #     BANC=avant sh plugins/two-factor-auth/tests/browser/preparer.sh # 2.30.0: the code before the password (avant.js)
+#     BANC=courriel sh plugins/two-factor-auth/tests/browser/preparer.sh # 2.33.0/2.34.0: the code by the recovery address (courriel.js)
+#
+# BANC=courriel stands in for the console: a bench-only formules directory
+# (formules-banc, removed at the end) carries a verified recovery address for
+# the account; this script hands the codes the plugin queues to courriel.js
+# instead of mailing them, and writes the domain policy when asked. Nothing
+# is mailed.
 #
 # BANC=avant answers the checkpoints of avant.js with the number of
 # pwdFailureTime values of the account — the failures the directory counted —
@@ -26,7 +33,7 @@
 # (tools/banc-conteneurs/README.md). Runs as root on the host.
 set -eu
 BANC=${BANC:-forcer}
-case "$BANC" in forcer|cle|avant) ;; *) echo "BANC=forcer, cle ou avant" >&2; exit 2 ;; esac
+case "$BANC" in forcer|cle|avant|courriel) ;; *) echo "BANC=forcer, cle, avant ou courriel" >&2; exit 2 ;; esac
 ICI=$(cd "$(dirname "$0")" && pwd)
 GREFFON=$(cd "$ICI/../.." && pwd)
 COMPTES=${COMPTES:-/root/Development/SnappyMail/business/smail-tn/tests/browser/comptes_essai.php}
@@ -34,6 +41,7 @@ RACINE=/opt/docker/SnappyMail-banc/smail
 D=$RACINE/htdocs/data/_data_/_default_
 CONF=$D/configs/plugin-two-factor-auth.json
 SAUVE=$RACINE/sauvegarde-2fa-$$
+FORMULES=$D/formules-banc
 [ -d "$D/plugins" ] || { echo "pas de banc-smail sous $RACINE" >&2; exit 2; }
 [ -f "$GREFFON/index.php" ] || { echo "pas de greffon dans $GREFFON" >&2; exit 2; }
 
@@ -53,6 +61,7 @@ menage() {
 	cp -a "$SAUVE/plugin" "$D/plugins/two-factor-auth"
 	if [ -f "$SAUVE/conf.json" ]; then cp -a "$SAUVE/conf.json" "$CONF"; else rm -f "$CONF"; fi
 	rm -rf "$SAUVE"
+	rm -rf "$FORMULES"
 	vider_cache
 	echo "banc remis : greffon et configuration d'origine"
 }
@@ -65,8 +74,10 @@ python3 - "$CONF" "$BANC" <<'PY'
 import json, os, sys
 f = sys.argv[1]
 c = json.load(open(f)) if os.path.exists(f) else {}
-# avant.js enrols by itself, from the plain mailbox: nobody is forced.
-c.setdefault('plugin', {})['force_two_factor_domains'] = '' if sys.argv[2] == 'avant' else 'smail.tn'
+# avant.js and courriel.js enrol by themselves, from the plain mailbox: nobody is forced.
+c.setdefault('plugin', {})['force_two_factor_domains'] = '' if sys.argv[2] in ('avant', 'courriel') else 'smail.tn'
+if sys.argv[2] == 'courriel':
+    c['plugin']['email_code_dir'] = '/var/www/html/data/_data_/_default_/formules-banc'
 if sys.argv[2] == 'cle':
     c['plugin'].update(webauthn_enabled=True, webauthn_origins='http://banc-smail.test:8932', webauthn_rp_id='banc-smail.test')
 json.dump(c, open(f, 'w'), indent=4)
@@ -77,6 +88,26 @@ vider_cache
 echo "greffon two-factor-auth <- $GREFFON ($(sed -n "s/.*VERSION *= *'\([^']*\)'.*/\1/p" "$GREFFON/index.php"))"
 
 sudo -E -u apache php -- creer "$A" < "$COMPTES" | head -1
+if [ courriel = "$BANC" ]; then
+	rm -rf "$FORMULES"
+	mkdir -p -m 750 "$FORMULES/etat"
+	printf '{"formule":"smail","secours":{"secours":"essai.secours@example.com","verifiee":true}}' \
+		> "$FORMULES/etat/$(printf '%s' "$A@smail.tn" | sha256sum | cut -d' ' -f1).json"
+	chown -R 33:33 "$FORMULES"
+fi
+# What the console does with a queued code, here handed to courriel.js.
+code_file() {
+	for i in 1 2 3 4 5 6; do
+		F=$(ls -t "$FORMULES"/codes/*.json 2>/dev/null | head -1)
+		if [ -n "$F" ]; then
+			python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["code"])' "$F"
+			rm -f "$FORMULES"/codes/*.json
+			return
+		fi
+		sleep 1
+	done
+	echo aucun
+}
 podman exec puppeteer-test mkdir -p /essai/two-factor-auth
 podman cp "$ICI/$BANC.js" puppeteer-test:/essai/two-factor-auth/$BANC.js
 [ -n "${CAPTURES:-}" ] && podman exec puppeteer-test mkdir -p /essai/two-factor-auth/captures
@@ -91,13 +122,21 @@ A="$A@smail.tn" MESURE=${MESURE:-} podman exec -e MDP -e A -e MESURE \
 	${CAPTURES:+-e CAPTURES=/essai/two-factor-auth/captures} \
 	puppeteer-test node /essai/two-factor-auth/$BANC.js &
 NOEUD=$!
-if [ avant = "$BANC" ] || [ cle = "$BANC" ]; then
-	VU=
+if [ avant = "$BANC" ] || [ cle = "$BANC" ] || [ courriel = "$BANC" ]; then
 	while kill -0 $NOEUD 2>/dev/null; do
 		E=$(podman exec puppeteer-test cat /essai/two-factor-auth/etape 2>/dev/null || true)
-		if [ -n "$E" ] && [ "$E" != "$VU" ] && [ fin != "$E" ]; then
-			echecs_annuaire | podman exec -i puppeteer-test sh -c 'cat > /essai/two-factor-auth/lu'
-			VU=$E
+		if [ -n "$E" ] && [ fin != "$E" ]; then
+			podman exec puppeteer-test rm -f /essai/two-factor-auth/etape
+			case "$BANC:$E" in
+			courriel:code) code_file ;;
+			courriel:eteindre)
+				mkdir -p -m 750 "$FORMULES/etat/domaines"
+				printf '{"domaine":"smail.tn","code_secours":false}' \
+					> "$FORMULES/etat/domaines/$(printf smail.tn | sha256sum | cut -d' ' -f1).json"
+				chown -R 33:33 "$FORMULES/etat/domaines"
+				echo ok ;;
+			*) echecs_annuaire ;;
+			esac | podman exec -i puppeteer-test sh -c 'cat > /essai/two-factor-auth/lu'
 		fi
 		sleep 1
 	done

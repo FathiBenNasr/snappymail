@@ -7,9 +7,14 @@ visibles sont ceux de ce compte, qui n'existe plus) :
     BANC=cle CAPTURES=$PWD/plugins/two-factor-auth/docs/captures \
         sh plugins/two-factor-auth/tests/browser/preparer.sh
 
+(`BANC=courriel` pour les trois captures `courriel-*`.)
+
 | Image | Ce qu'elle montre |
 |---|---|
 | `avant-1-rappel.png` | (2.30.0, `BANC=avant`) Une connexion envoyée sans code, refusée **comme un mot de passe faux** — rien n'est allé à l'annuaire. Sous le refus, le rappel (depuis la 2.32.0 : le code, un code de secours ou la clé) : il s'affiche après **tout** refus, côté navigateur, pour **tout** compte, si bien qu'il ne dit pas qui a un second facteur. |
+| `courriel-1-reglages.png` | (2.33.0, `BANC=courriel`) La section « Code par l'adresse de secours » des réglages : l'adresse vérifiée, masquée (`e•••@example.com`, l'adresse fictive du banc), et le bouton pour envoyer un code. |
+| `courriel-2-active.png` | (2.33.0) Le facteur activé après le code reçu et les codes de secours prouvés : « Activé » et « Désactiver ». |
+| `courriel-3-connexion.png` | (2.33.0) L'écran de connexion avec « Recevoir un code sur mon adresse de secours », proposé à tout visiteur. |
 | `cle-0-note.png` | (2.32.0) Avant d'enregistrer une première clé, sans application à codes : « Cette clé sera votre seul second facteur… ». |
 | `cle-1-codes.png`, `-en`, `-ar` | (2.32.0) Les huit codes de secours montrés une fois (masqués dans la capture), et « Je les ai gardés — continuer ». En en/ar, ce sont les codes d'une régénération. |
 | `cle-1-preuve.png`, `-en`, `-ar` | (2.32.0) Les codes ont quitté l'écran : la preuve demande le code n° N de la liste ; un faux code est refusé, la clé reste en attente. |

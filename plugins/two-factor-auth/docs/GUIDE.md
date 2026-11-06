@@ -109,12 +109,16 @@ mais moins sûr : qui lit votre boîte de secours reçoit aussi vos codes.
 4. Si c'est votre premier second facteur, gardez les codes de secours affichés et confirmez-les comme dans
    [« Garder ses codes de secours »](#garder-ses-codes-de-secours).
 
+![La section « Code par l'adresse de secours », activée](captures/courriel-2-active.png)
+
 **Résultat :** **Activé** s'affiche à côté de l'adresse masquée.
 
 Si la section n'apparaît pas, votre organisation a peut-être choisi de ne pas accepter ce code : utilisez une
 application à codes ou une clé de sécurité.
 
 ## Se connecter avec un code reçu par courriel
+
+![Le bouton sur l'écran de connexion](captures/courriel-3-connexion.png)
 
 1. Sur l'écran de connexion, saisissez votre adresse, puis cliquez sur **Recevoir un code sur mon adresse de
    secours**.

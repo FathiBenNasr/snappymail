@@ -104,12 +104,16 @@ less safe: whoever reads your recovery mailbox also gets your codes.
 4. If it is your first second factor, keep the backup codes shown and confirm them as in
    [“Keep your backup codes”](#keep-your-backup-codes).
 
+![The "Code by the recovery address" section, switched on](captures/courriel-2-active.png)
+
 **Result:** **On** shows next to the masked address.
 
 If the section does not show, your organisation may have chosen not to accept this code: use an authenticator
 app or a security key.
 
 ## Sign in with a code received by email
+
+![The button on the sign-in screen](captures/courriel-3-connexion.png)
 
 1. On the sign-in screen, type your address, then click **Send a code to my recovery address**.
 2. Open your recovery mailbox, then type the 8-digit code in **Verification code or backup code**, with your
