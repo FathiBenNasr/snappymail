@@ -8,8 +8,9 @@
   avant nous. Nos deux boutons se placent désormais juste après le champ du code (`placer()`, `after()`), quel que soit
   l'ordre de chargement des greffons. Tests : JS 58 (ordre éprouvé dans les deux ordres, mutation tuée). Bancs :
   courriel 24/24 (ordre mesuré sur banc-smail), forcer 34, avant 19, clé 70. Déployé sur les deux webmails.
-* Les liens restent au-dessus de « Se souvenir de moi » et « Se connecter » : ils appartiennent au groupe du bas que le
-  cœur place avant ces deux éléments. Les descendre sous le bouton demanderait de déplacer le nœud d'un autre greffon.
+* **2.34.2** (demande du propriétaire) : « Mot de passe oublié » sous le champ du mot de passe, « Créer un compte » sous
+  « Se connecter » (`rangerLiens()`, en micro-tâche après tous les écouteurs ; l'enveloppe vide de `login-register` retirée).
+  JS 59, 2 mutations tuées ; bancs courriel 27/27 (places mesurées sur banc-smail), forcer 34, avant 19, clé 70.
 
 ## 5 novembre 2026 — 2.33.0 : le code par l'adresse de secours (TODO de la suite §91 point 1)
 

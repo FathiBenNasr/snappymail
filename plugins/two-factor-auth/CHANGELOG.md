@@ -3,6 +3,11 @@
 Les versions antérieures à 2.30.0 sont décrites, avec leurs mesures, dans
 [`TODO.md`](TODO.md).
 
+## 2.34.2 — 6 novembre 2026
+
+* **« Mot de passe oublié » passe sous le champ du mot de passe, « Créer un compte » sous le bouton « Se connecter ».**
+  Ces deux liens viennent du greffon `login-register` (non modifié) ; two-factor-auth les déplace une fois l'écran dessiné.
+
 ## 2.34.1 — 6 novembre 2026
 
 * **L'écran de connexion se lit dans l'ordre** : « Utiliser une clé de sécurité » et « Recevoir un code sur mon adresse de

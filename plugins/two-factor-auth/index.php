@@ -11,7 +11,7 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 {
 	const
 		NAME     = 'Two Factor Authentication',
-		VERSION  = '2.34.1',
+		VERSION  = '2.34.2',
 		RELEASE  = '2026-11-06',
 		REQUIRED = '2.36.0',
 		CATEGORY = 'Login',

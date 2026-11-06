@@ -296,3 +296,32 @@ test('2.34.1: le code, la clé et le courriel en haut ; « mot de passe oublié 
 	assert.deepStrictEqual(ordre(true), ['code', 'cle', 'courriel', 'liens']);
 	assert.deepStrictEqual(ordre(false), ['code', 'cle', 'courriel', 'liens']);
 });
+
+/* ---- 2.34.2: "Forgot password" under the password, "Create account" under the button ---- */
+test('2.34.2: « mot de passe oublié » sous le mot de passe, « créer un compte » sous « Se connecter », l’enveloppe vide retirée', () => {
+	const ecoute = {}, micro = [];
+	// a flat list of the form's children, in order; enough for after() and remove()
+	const formulaire = [];
+	const noeud = (nom, parent) => ({ nom, style: {}, parentElement: parent, children: [],
+		after(e) { const l = this.parentElement ? this.parentElement.children : formulaire;
+			const ancien = e.parentElement ? e.parentElement.children : formulaire;
+			ancien.splice(ancien.indexOf(e), 1); e.parentElement = this.parentElement; l.splice(l.indexOf(this) + 1, 0, e); },
+		remove() { formulaire.splice(formulaire.indexOf(this), 1); },
+		closest() { return this.parentElement; } });
+	const mdp = noeud('motdepasse', null), groupe = noeud('groupe', null), enveloppe = noeud('enveloppe', null), bouton = noeud('bouton', null);
+	formulaire.push(mdp, groupe, enveloppe, bouton);
+	const oubli = noeud('oubli', enveloppe), compte = noeud('compte', enveloppe);
+	enveloppe.children.push(oubli, compte);
+	const champ = { closest: () => mdp }, btn = { parentElement: bouton };
+	const vue = { viewModelTemplateID: 'Login', submitError() {}, submitErrorAdditional() {},
+		viewModelDom: { querySelector: s => ({ '.forgot-link': oubli, '.registration-link': compte,
+			'input[name=Password]': champ, '.buttonLogin': btn })[s] || null } };
+	const bac = { addEventListener: (n, f) => { ecoute[n] = f; }, setTimeout() {}, queueMicrotask: f => micro.push(f),
+		Element: { fromHTML: () => ({}) }, document: { location: {} }, window: {} };
+	bac.window.rl = { settings: { get: () => false }, i18n: k => k };
+	vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../js/TwoFactorAuthLogin.js'), 'utf8'), bac);
+	ecoute['rl-view-model']({ detail: vue });
+	assert.deepStrictEqual(formulaire.map(n => n.nom), ['motdepasse', 'groupe', 'enveloppe', 'bouton'], 'rien avant la micro-tâche');
+	micro.splice(0).forEach(f => f());
+	assert.deepStrictEqual(formulaire.map(n => n.nom), ['motdepasse', 'oubli', 'groupe', 'bouton', 'compte']);
+});

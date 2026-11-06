@@ -133,15 +133,23 @@ const hote = async etape => {
 		await deconnecter();
 		await ecranConnexion();
 		verifier(await visible('.twofactor-email button'), 'écran de connexion : le bouton « Recevoir un code sur mon adresse de secours » est là');
-		// 2.34.1: the code field and the two buttons at the top, "Forgot password" / "Create account" below them.
+		// 2.34.1: the code field and the two buttons at the top of the group; 2.34.2: "Forgot password" right under
+		// the password field, "Create account" under the sign-in button.
 		const place = await p.evaluate(() => {
 			const tout = [...document.querySelectorAll('#plugin-Login-BottomControlGroup *')];
 			const pos = s => tout.indexOf(document.querySelector('#plugin-Login-BottomControlGroup ' + s));
+			const oubli = document.querySelector('.forgot-link'), compte = document.querySelector('.registration-link');
+			const mdp = document.querySelector('input[name=Password]')?.closest('.controls');
+			const bouton = document.querySelector('.buttonLogin')?.parentElement;
 			return { code: pos('input[name=totp_code]'), cle: pos('.twofactor-key'), mail: pos('.twofactor-email'),
-				liens: Math.min(...['.forgot-link', '.registration-link'].map(pos).filter(i => i >= 0), Infinity) };
+				oubli: !!oubli && oubli.previousElementSibling === mdp, compte: !!compte && compte.previousElementSibling === bouton,
+				vide: document.querySelectorAll('#plugin-Login-BottomControlGroup .clearfix:empty').length };
 		});
-		verifier(place.code >= 0 && place.cle > place.code && place.mail > place.cle && place.liens > place.mail && place.liens !== Infinity,
-			'le code, la clé et le courriel en haut ; « mot de passe oublié » et « créer un compte » en dessous (' + JSON.stringify(place) + ')');
+		verifier(place.code >= 0 && place.cle > place.code && place.mail > place.cle,
+			'le code, la clé et le courriel en haut du groupe (' + JSON.stringify(place) + ')');
+		verifier(place.oubli, '« Mot de passe oublié » juste sous le champ du mot de passe');
+		verifier(place.compte, '« Créer un compte » sous le bouton « Se connecter »');
+		verifier(0 === place.vide, 'aucune enveloppe vide laissée dans le groupe');
 		await remplir('input[name=Email]', A);
 		await capture('courriel-3-connexion', 'form');
 		const dem = p.waitForResponse(x => /EmailCodeLoginRequest/.test(x.request().postData() || ''), { timeout: 30000 });

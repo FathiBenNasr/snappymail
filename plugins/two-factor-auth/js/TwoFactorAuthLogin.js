@@ -82,6 +82,23 @@
 			}, 'WebAuthnLoginOptions', { Email: email });
 		};
 
+	const rangerLiens = racine => {
+		const oubli = racine?.querySelector('.forgot-link'),
+			compte = racine?.querySelector('.registration-link'),
+			enveloppe = (oubli || compte)?.parentElement,
+			motDePasse = racine?.querySelector('input[name=Password]')?.closest('.controls'),
+			bouton = racine?.querySelector('.buttonLogin')?.parentElement;
+		if (oubli && motDePasse) {
+			motDePasse.after(oubli);
+			oubli.style.textAlign = 'end';
+		}
+		if (compte && bouton) {
+			bouton.after(compte);
+			compte.style.textAlign = 'center';
+		}
+		enveloppe && !enveloppe.children.length && enveloppe.remove();
+	};
+
 	addEventListener('rl-view-model', e => {
 		if ('Login' === e.detail.viewModelTemplateID) {
 			loginView = e.detail;
@@ -122,6 +139,11 @@
 					placer(mail);
 				}
 			}
+			// 2.34.2: the links of login-register (upstream, left untouched): "Forgot
+			// password" under the password field, "Create account" under the sign-in
+			// button. A microtask, so that it runs once every listener of this event
+			// has drawn, whichever plugin was loaded first.
+			queueMicrotask(() => rangerLiens(e.detail.viewModelDom));
 		}
 	});
 
