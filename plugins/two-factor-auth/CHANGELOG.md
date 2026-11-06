@@ -3,6 +3,12 @@
 Les versions antérieures à 2.30.0 sont décrites, avec leurs mesures, dans
 [`TODO.md`](TODO.md).
 
+## 2.34.1 — 6 novembre 2026
+
+* **L'écran de connexion se lit dans l'ordre** : « Utiliser une clé de sécurité » et « Recevoir un code sur mon adresse de
+  secours » viennent juste sous le champ du code ; « Mot de passe oublié » et « Créer un compte » passent en dessous.
+  Avant, les deux boutons tombaient sous ces liens.
+
 ## 2.34.0 — 6 novembre 2026
 
 * **Une organisation peut refuser le code par l'adresse de secours** pour ses comptes. Il reste **allumé par

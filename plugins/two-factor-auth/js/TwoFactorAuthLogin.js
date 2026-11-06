@@ -90,7 +90,7 @@
 				// a person without their key must see that a way in exists.
 				placeholder = 'PLUGIN_2FA/PLACEHOLDER_LOGIN_CODE';
 			if (container) {
-				container.prepend(Element.fromHTML('<div class="controls">'
+				const code = Element.fromHTML('<div class="controls">'
 					+ '<span class="fontastic">⏱</span>'
 					+ '<input name="totp_code" type="text" class="input-block-level"'
 					+ ' pattern="[0-9]*" inputmode="numeric"'
@@ -98,13 +98,20 @@
 					+ ' data-bind="textInput: totp, disable: submitRequest" data-i18n="[placeholder]'+placeholder
 					+ '" placeholder="'+rl.i18n(placeholder)+'">'
 				+ '<input name="webauthn_assertion" type="hidden" value="">'
-				+ '</div>'));
+				+ '</div>');
+				container.prepend(code);
+				// 2.34.1: the key and the recovery-address buttons go right under the
+				// code field, with it at the top; whatever another plugin appended to
+				// this group (login-register: "Forgot password", "Create account")
+				// stays below them, whichever of the two plugins ran first.
+				let ancre = code;
+				const placer = el => { ancre.after(el); ancre = el; };
 				// Shown only once the server has said this account has a key.
 				const button = Element.fromHTML('<div class="controls twofactor-key" hidden="">'
 					+ '<button type="button" class="btn" data-i18n="PLUGIN_2FA/BUTTON_USE_PASSKEY">'
 					+ rl.i18n('PLUGIN_2FA/BUTTON_USE_PASSKEY') + '</button></div>');
 				button.querySelector('button')?.addEventListener('click', useKey);
-				container.append(button);
+				placer(button);
 				showKey(keyLogin());
 				if (emailLogin()) {
 					const mail = Element.fromHTML('<div class="controls twofactor-email">'
@@ -112,7 +119,7 @@
 						+ rl.i18n('PLUGIN_2FA/BUTTON_EMAIL_CODE') + '</button></div>');
 					const b = mail.querySelector('button');
 					b?.addEventListener('click', () => askEmailCode(b));
-					container.append(mail);
+					placer(mail);
 				}
 			}
 		}

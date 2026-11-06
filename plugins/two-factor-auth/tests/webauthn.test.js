@@ -96,7 +96,7 @@ function ecranConnexion(extra = {}, reglages = {}) {
 		code: { value: '', focus() { this.focused = (this.focused || 0) + 1; }, dispatchEvent() {} },
 		assertion: { value: '' },
 		email: { value: 'rym@smail.tn', focus() { this.focused = (this.focused || 0) + 1; } },
-		bouton: { hidden: true, ecouteurs: {}, querySelector: () => ({ addEventListener: (n, f) => { champs.bouton.clic = f; } }) },
+		bouton: { hidden: true, ecouteurs: {}, after() {}, querySelector: () => ({ addEventListener: (n, f) => { champs.bouton.clic = f; } }) },
 		connexion: { clics: 0, click() { this.clics++; w.envoye.push({ code: champs.code.value, assertion: champs.assertion.value }); } }
 	};
 	w.envoye = [];
@@ -117,7 +117,7 @@ function ecranConnexion(extra = {}, reglages = {}) {
 		addEventListener: (n, f) => { ecoute[n] = f; },
 		setTimeout: f => minuteries.push(f),
 		queueMicrotask: f => minuteries.push(f),
-		Element: { fromHTML: h => (h.includes('twofactor-key') ? champs.bouton : {}) },
+		Element: { fromHTML: h => (h.includes('twofactor-key') ? champs.bouton : { after() {} }) },
 		Event: function () {},
 		document: { location: {} }
 	});

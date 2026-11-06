@@ -185,7 +185,7 @@ function avecCles(cles) {
 	const bac = {
 		addEventListener: (n, f) => { ecoute[n] = f; },
 		setTimeout: f => files.push(f), queueMicrotask: f => files.push(f),
-		Element: { fromHTML: h => ({ h, querySelector: () => null }) },
+		Element: { fromHTML: h => ({ h, querySelector: () => null, after: e => html.push(e) }) },
 		document: { location: {} },
 		window: { TwoFactorWebAuthn: { supported: () => true, fromRefusal: () => null } }
 	};
@@ -230,7 +230,7 @@ function avecCourriel(allume, adresse = 'imen') {
 	const bac = {
 		addEventListener: (n, f) => { ecoute[n] = f; },
 		setTimeout: f => minuteries.push(f), queueMicrotask: f => f(),
-		Element: { fromHTML: h => ({ h, querySelector: s => ('button' === s && h.includes('twofactor-email') ? bouton : null) }) },
+		Element: { fromHTML: h => ({ h, querySelector: s => ('button' === s && h.includes('twofactor-email') ? bouton : null), after: e => ajoutes.push(e) }) },
 		document: { location: {} }, Event: class {}, window: {}
 	};
 	bac.window.rl = {
@@ -269,4 +269,30 @@ test('2.33.0: sans adresse tapée, rien ne part ; un clic désactive le bouton u
 	assert.strictEqual(c.bouton.disabled, true);
 	c.minuteries.splice(0).forEach(f => f());
 	assert.strictEqual(c.bouton.disabled, false);
+});
+
+/* ---- 2.34.1: the order on the login screen ---- */
+function ordre(registreDabord) {
+	const ecoute = {}, enfants = [];
+	const noeud = h => ({ h, querySelector: () => null,
+		after(e) { enfants.splice(enfants.indexOf(this) + 1, 0, e); } });
+	const conteneur = { prepend: e => enfants.unshift(e), append: e => enfants.push(e) };
+	const liens = noeud('<p class="forgot-link"></p><p class="registration-link"></p>');
+	registreDabord && conteneur.append(liens);
+	const vue = { viewModelTemplateID: 'Login', submitError() {}, submitErrorAdditional() {},
+		viewModelDom: { querySelector: s => ('#plugin-Login-BottomControlGroup' === s ? conteneur : null) } };
+	const bac = { addEventListener: (n, f) => { ecoute[n] = f; }, setTimeout() {}, queueMicrotask() {},
+		Element: { fromHTML: noeud }, document: { location: {} }, Event: class {},
+		window: { TwoFactorWebAuthn: { supported: () => true, fromRefusal: () => null } } };
+	bac.window.rl = { settings: { get: k => ('TwoFactorKeyLogin' === k || 'TwoFactorEmailLogin' === k) }, i18n: k => k };
+	vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../js/TwoFactorAuthLogin.js'), 'utf8'), bac);
+	ecoute['rl-view-model']({ detail: vue });
+	registreDabord || conteneur.append(liens);
+	return enfants.map(e => /totp_code/.test(e.h) ? 'code' : /twofactor-key/.test(e.h) ? 'cle'
+		: /twofactor-email/.test(e.h) ? 'courriel' : /forgot-link/.test(e.h) ? 'liens' : '?');
+}
+
+test('2.34.1: le code, la clé et le courriel en haut ; « mot de passe oublié » et « créer un compte » en bas, quel que soit l’ordre des greffons', () => {
+	assert.deepStrictEqual(ordre(true), ['code', 'cle', 'courriel', 'liens']);
+	assert.deepStrictEqual(ordre(false), ['code', 'cle', 'courriel', 'liens']);
 });
