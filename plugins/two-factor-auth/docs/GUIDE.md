@@ -111,6 +111,9 @@ mais moins sûr : qui lit votre boîte de secours reçoit aussi vos codes.
 
 **Résultat :** **Activé** s'affiche à côté de l'adresse masquée.
 
+Si la section n'apparaît pas, votre organisation a peut-être choisi de ne pas accepter ce code : utilisez une
+application à codes ou une clé de sécurité.
+
 ## Se connecter avec un code reçu par courriel
 
 1. Sur l'écran de connexion, saisissez votre adresse, puis cliquez sur **Recevoir un code sur mon adresse de

@@ -11,8 +11,8 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 {
 	const
 		NAME     = 'Two Factor Authentication',
-		VERSION  = '2.33.0',
-		RELEASE  = '2026-11-05',
+		VERSION  = '2.34.0',
+		RELEASE  = '2026-11-06',
 		REQUIRED = '2.36.0',
 		CATEGORY = 'Login',
 		DESCRIPTION = 'Provides support for TOTP 2FA, security keys / passkeys (WebAuthn) and a code sent to the verified recovery address as a second factor',
@@ -544,7 +544,8 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 			$bTotp = !empty($aRecord['Enable']);
 			return TwoFactorRecord::check($aRecord, $sCode, $this->recordKey(), \time(),
 				fn (string $sSecret, string $s) => $bTotp ? $oProvider->MatchingSlice($sSecret, $s) : null,
-				array('b' => $this->loginBinding(), 'p' => 'login'));
+				// 2.34.0: no context, so no email code, where the domain turned it off.
+				$this->emailCodeDomainAllowed($oAccount->Email()) ? array('b' => $this->loginBinding(), 'p' => 'login') : null);
 		};
 		$aRecord = $this->loadRecord($oAccount);
 		if (!$aRecord) {
@@ -1637,7 +1638,7 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 	protected function recoveryAddress(string $sEmail) : string
 	{
 		$sDir = $this->emailCodeDir();
-		if ('' === $sDir || '' === $sEmail) {
+		if ('' === $sDir || '' === $sEmail || !$this->emailCodeDomainAllowed($sEmail)) {
 			return '';
 		}
 		$a = \json_decode((string) @\file_get_contents($sDir . '/etat/' . \hash('sha256', \strtolower(\trim($sEmail))) . '.json'), true);
@@ -1646,6 +1647,29 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 			return '';
 		}
 		return static::recoveryUsable($sEmail, $x['secours']) ? \strtolower(\trim($x['secours'])) : '';
+	}
+
+	/**
+	 * Whether the account's domain accepts the code by the recovery address
+	 * (2.34.0). On by default; the console turns it off for an organisation
+	 * that does not want a personal address to stand as a second factor, by
+	 * writing etat/domaines/<sha256(domain)>.json with "code_secours": false.
+	 * A file there that does not say true, or cannot be read, is "off": a
+	 * policy that cannot be read is not taken as consent.
+	 */
+	protected function emailCodeDomainAllowed(string $sEmail) : bool
+	{
+		$sDir = $this->emailCodeDir();
+		$iAt = \strrpos($sEmail, '@');
+		if ('' === $sDir || false === $iAt) {
+			return false;
+		}
+		$sFile = $sDir . '/etat/domaines/' . \hash('sha256', \strtolower(\trim(\substr($sEmail, $iAt + 1)))) . '.json';
+		if (!\file_exists($sFile)) {
+			return true;
+		}
+		$a = \json_decode((string) @\file_get_contents($sFile), true);
+		return \is_array($a) && true === ($a['code_secours'] ?? null);
 	}
 
 	/** A well-formed address, on another domain than the account's. */
@@ -2007,6 +2031,11 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 			// tested. A secret created next to a security key and never
 			// tested is not a second factor yet (2.28.0); backup codes are.
 			$bTotp = $bMarkTested || !empty($aRecord['Enable']);
+			// 2.34.0: a domain that turned the code by email off refuses
+			// the codes already sent too, not only the next ones.
+			if (null !== $aEmail && !$this->emailCodeDomainAllowed($oAccount->Email())) {
+				$aEmail = null;
+			}
 			[$sOutcome, $aNew] = TwoFactorRecord::check($aRecord, $sCode, $this->recordKey(), \time(),
 				fn (string $sSecret, string $s) => $bTotp ? $oProvider->MatchingSlice($sSecret, $s) : null, $aEmail);
 			if ('ok' === $sOutcome && $bMarkTested) {
@@ -2107,7 +2136,7 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 			// 2.33.0: the code by the recovery address. The address only masked,
 			// and only here, in the session — never at the login screen.
 			'PendingEmail' => $aPending ? !empty($aPending['em']) : false,
-			'EmailOffered' => '' !== $this->emailCodeDir(),
+			'EmailOffered' => '' !== $this->emailCodeDir() && $this->emailCodeDomainAllowed($oAccount->Email()),
 			'EmailMasked' => '' === ($sRecovery = $this->recoveryAddress($oAccount->Email())) ? '' : static::maskAddress($sRecovery),
 			'EmailOn' => $aRecord ? !empty($aRecord['EmailOn']) : false,
 			'BackupLeft' => $aRecord ? \count((array) ($aRecord['BackupHashes'] ?? array())) : 0,

@@ -3,6 +3,17 @@
 Les versions antérieures à 2.30.0 sont décrites, avec leurs mesures, dans
 [`TODO.md`](TODO.md).
 
+## 2.34.0 — 6 novembre 2026
+
+* **Une organisation peut refuser le code par l'adresse de secours** pour ses comptes. Il reste **allumé par
+  défaut**. Une société qui ne veut pas qu'une adresse personnelle, qu'elle ne tient pas, serve de second facteur
+  l'éteint depuis la console d'administration, page de l'organisation. Une fois éteint, la section n'est plus
+  proposée dans les réglages et aucun code n'est envoyé, ni à la connexion ni en cours de session. **Les codes déjà
+  envoyés sont refusés aussi.** Un compte dont c'était le seul second facteur se connecte avec ses codes de secours.
+* Le réglage est lu dans `etat/domaines/<sha256(domaine)>.json`, que la console écrit. Un fichier qui ne dit pas
+  `true`, ou qu'on ne peut pas lire, vaut « éteint ».
+* Tests : 12 contrôles de plus dans `ActionsTest.php`. Les 7 mutations des nouveaux gardes sont tuées.
+
 ## 2.33.0 — 5 novembre 2026
 
 * **Recevoir le code de connexion sur son adresse de secours** (demandé pour smail.tn et ses domaines hébergés).

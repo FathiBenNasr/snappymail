@@ -112,7 +112,7 @@ one is on.
 | `webauthn_max_passkeys` | 10 | per account (1–50) |
 | `webauthn_challenge_ttl` | 300 | seconds (30–3600); each challenge is used once |
 | `webauthn_counter_regression` | refuse | `refuse` or `warn` when a key's signature counter goes back |
-| `email_code_dir` | empty | (2.33.0) the `formules` directory shared with the administration console: it writes `etat/<sha256>.json` (the recovery address and whether it is verified) and mails what the plugin queues in `codes/`. Empty: the code by email is off |
+| `email_code_dir` | empty | (2.33.0) the `formules` directory shared with the administration console: it writes `etat/<sha256>.json` (the recovery address and whether it is verified) and mails what the plugin queues in `codes/`. Empty: the code by email is off. (2.34.0) A domain the console listed in `etat/domaines/<sha256(domain)>.json` without `"code_secours": true` refuses it, codes already sent included; no file means on |
 
 Verified on the server, without any third-party library
 (`providers/webauthn.php`): ES256, RS256 (2048–4096 bits), EdDSA (Ed25519, with

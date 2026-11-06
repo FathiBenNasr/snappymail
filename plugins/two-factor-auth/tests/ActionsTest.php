@@ -1098,6 +1098,54 @@ namespace {
 	$check('… with a current code it does, at once, no new backup codes', array($aT3['EmailOn'], isset($aT3['BackupCodes']), $aT3['Pending']), array(true, false, false));
 	$check('the actions of the email enrolment are open to an account still setting up', array(\str_contains(TwoFactorAuthPlugin::SETUP_ALLOWED_ACTIONS, 'DoPluginEmailCodeRequest'), \str_contains(TwoFactorAuthPlugin::SETUP_ALLOWED_ACTIONS, 'DoPluginEmailCodeEnable'), \str_contains(TwoFactorAuthPlugin::SETUP_ALLOWED_ACTIONS, 'Disable')), array(true, true, false));
 	$check('mask: f•••@domain', array(TwoFactorAuthPlugin::maskAddress('fathi@gmail.com'), TwoFactorAuthPlugin::maskAddress('x')), array('f•••@gmail.com', ''));
+
+	// 2.34.0: a domain can turn the code by email off; on by default.
+	$politique = function (string $sDomaine, ?string $sJson) use ($sDirE) {
+		$fP = $sDirE . '/etat/domaines/' . \hash('sha256', $sDomaine) . '.json';
+		\is_dir(\dirname($fP)) || \mkdir(\dirname($fP), 0700, true);
+		null === $sJson ? @\unlink($fP) : \file_put_contents($fP, $sJson);
+	};
+	$deverrouiller($tE);
+	$aRaw = $tE->raw(); $aRaw['EmailSends'] = array(); $tE->setRaw($aRaw);
+	[$rE] = $demande($tE, 'amal@smail.tn'); $sAvant = $file()[0]['code'] ?? '';
+	$check('2.34.0: no domain policy — the code is offered and sent (on by default)', array($rE, \strlen($sAvant), $tE->DoGetTwoFactorInfo()['Result']['EmailOffered']), array(true, 8, true));
+	$tE->request(); $tE->params = array('Purpose' => 'reauth'); $tE->DoEmailCodeRequest(); $sReauthAvant = $file()[0]['code'] ?? '';
+	$politique('smail.tn', '{"domaine":"smail.tn","code_secours":false}');
+	$tE->request(); $tE->params = array('Code' => $sReauthAvant);
+	$check('… a "reauth" code sent before proves nothing any more', array(\strlen($sReauthAvant), $tE->DoEmailCodeDisable()['Result']), array(8, false));
+	$iT = $tE->DoGetTwoFactorInfo()['Result'];
+	$check('… the domain turns it off: not offered, the address not shown', array($iT['EmailOffered'], $iT['EmailMasked']), array(false, ''));
+	$check('… a code sent before is refused at login', $login($tE, array('totp_code' => $sAvant)), $AUTH);
+	$check('… the authenticator still opens the account', $login($tE, array('totp_code' => TwoFactorAuthTotpSlice::code($cT3['Secret'], \intdiv(\time(), 30) + 1))), 'directory+ok');
+	$deverrouiller($tE);
+	$aRaw = $tE->raw(); $aRaw['EmailSends'] = array(); $tE->setRaw($aRaw);
+	[$rE] = $demande($tE, 'amal@smail.tn');
+	$check('… the login request answers as usual and sends nothing', array($rE, $file()), array(true, array()));
+	$tE->request(); $tE->params = array('Purpose' => 'reauth');
+	$check('… nor in the session', array($tE->DoEmailCodeRequest()['Result']['Sent'], $file()), array(false, array()));
+	$oT5 = new P(); $oT5->config = $EM; $oT5->oAccount = new \RainLoop\Model\MainAccount('nour@SMail.TN');
+	$secours('nour@smail.tn', 'nour@gmail.com');
+	$oT5->request(); $oT5->params = array('Purpose' => 'enroll');
+	$check('… whatever the case of the domain', array($oT5->DoEmailCodeRequest()['Result']['Sent'], $file()), array(false, array()));
+	\is_dir($oT5->oStore->root) && \exec('rm -rf ' . \escapeshellarg($oT5->oStore->root));
+	$oT4 = new P(); $oT4->config = $EM; $oT4->oAccount = new \RainLoop\Model\MainAccount('salma@autre.tn');
+	$secours('salma@autre.tn', 'salma@gmail.com');
+	$oT4->request(); $oT4->params = array('Purpose' => 'enroll');
+	$check('… another domain is not touched', $oT4->DoEmailCodeRequest()['Result']['Sent'], true);
+	$file();
+	foreach (array('{"code_secours":"no"}', '{not json', '') as $sJ) {
+		$politique('smail.tn', $sJ);
+		$tE->request(); $tE->params = array('Purpose' => 'reauth');
+		$check('… a policy that is not an explicit true is off: ' . \json_encode($sJ), $tE->DoEmailCodeRequest()['Result']['Sent'], false);
+	}
+	$politique('smail.tn', '{"code_secours":true}');
+	$deverrouiller($tE);
+	$aRaw = $tE->raw(); $aRaw['EmailSends'] = array(); $tE->setRaw($aRaw);
+	$tE->request(); $tE->params = array('Purpose' => 'reauth');
+	$check('… an explicit true is on', $tE->DoEmailCodeRequest()['Result']['Sent'], true);
+	$file();
+	$politique('smail.tn', null);
+	\is_dir($oT4->oStore->root) && \exec('rm -rf ' . \escapeshellarg($oT4->oStore->root));
 	foreach (array($em0, $em, $nE, $tE) as $x) { \is_dir($x->oStore->root) && \exec('rm -rf ' . \escapeshellarg($x->oStore->root)); }
 	\exec('rm -rf ' . \escapeshellarg($sDirE));
 

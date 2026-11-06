@@ -106,6 +106,9 @@ less safe: whoever reads your recovery mailbox also gets your codes.
 
 **Result:** **On** shows next to the masked address.
 
+If the section does not show, your organisation may have chosen not to accept this code: use an authenticator
+app or a security key.
+
 ## Sign in with a code received by email
 
 1. On the sign-in screen, type your address, then click **Send a code to my recovery address**.
