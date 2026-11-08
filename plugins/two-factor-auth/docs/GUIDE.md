@@ -118,6 +118,8 @@ application à codes ou une clé de sécurité.
 
 ## Se connecter avec un code reçu par courriel
 
+**À quoi ça sert :** ouvrir votre session quand vous n'avez pas votre application d'authentification sous la main.
+
 ![Le bouton sur l'écran de connexion](captures/courriel-3-connexion.png)
 
 1. Sur l'écran de connexion, saisissez votre adresse, puis cliquez sur **Recevoir un code sur mon adresse de

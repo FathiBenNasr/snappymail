@@ -113,6 +113,8 @@ app or a security key.
 
 ## Sign in with a code received by email
 
+**What it is for:** opening your session when you do not have your authenticator app at hand.
+
 ![The button on the sign-in screen](captures/courriel-3-connexion.png)
 
 1. On the sign-in screen, type your address, then click **Send a code to my recovery address**.
