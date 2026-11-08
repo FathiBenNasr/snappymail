@@ -19,7 +19,7 @@ connaît (Google Authenticator, Microsoft Authenticator, FreeOTP…).
 
 **Résultat :** à la prochaine connexion, le webmail demande le code de l'application en plus du mot de
 passe. Si votre webmail propose **Mots de passe d'application**, vos logiciels de courrier (téléphone,
-Thunderbird, Outlook) en demandent un à la place de votre mot de passe : créez-les d'abord.
+Thunderbird, Outlook) en demandent un à la place de votre mot de passe : créez-les d'abord. Tant que cette case n'est pas cochée, votre compte n'est pas protégé.
 
 ## Se connecter avec le code
 

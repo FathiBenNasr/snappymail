@@ -5,6 +5,8 @@ Les versions antérieures à 2.30.0 sont décrites, avec leurs mesures, dans
 
 ## [Non publié]
 
+- Guide : affirmations fausses ou dangereuses corrigées après la lecture adversariale.
+
 - Guide relu pour le manuel : corrections de la relecture de fond.
 
 - Guide relu pour le manuel : la connexion par code reçu par courriel dit à quoi elle sert.

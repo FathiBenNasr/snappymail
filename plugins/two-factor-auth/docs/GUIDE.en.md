@@ -19,7 +19,7 @@ Authenticator, Microsoft Authenticator, FreeOTP…).
 
 **Result:** at your next sign-in, the webmail asks for the app's code as well as your password. If your
 webmail offers **App passwords**, your mail programs (phone, Thunderbird, Outlook) ask for one instead of
-your password: create them first.
+your password: create them first. Until this box is ticked, your account is not protected.
 
 ## Sign in with the code
 
