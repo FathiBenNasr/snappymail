@@ -11,7 +11,7 @@ Authenticator, Microsoft Authenticator, FreeOTP…).
 
 1. Install an authenticator app on your phone.
 2. In the webmail, open **Settings**, then **2-Step Verification (TOTP)**.
-3. Click **Create a secret**. A QR code appears.
+3. Click **Activate**. A QR code appears.
 4. In the phone app, add an account by scanning the QR code.
 5. Click **test**, then type the code the app shows.
 6. Write down your **backup codes** and keep them somewhere safe (see ["Keep your backup codes"](#keep-your-backup-codes)).
@@ -159,6 +159,39 @@ As long as you only have a key, with no authenticator app, a warning stays in th
 
 **Result:** the key can no longer be used to sign in. Someone who stole your session cannot remove your
 protections without your code or your key.
+
+## Turn off 2-step verification
+
+**What it is for:** go back to the password alone, for example if you change how you protect your account.
+
+**Warning:** while verification is off, the password alone opens your account. If your organisation requires it, the
+webmail will ask you to set it up again.
+
+1. Open **Settings**, then **2-Step Verification (TOTP)**.
+2. Untick **Enable 2-Step verification**.
+3. In the **2-Step verification test** window, type a code from your app, or a backup code, in **Code**, then click
+   **Test**. If you have a security key, you can click **Use a security key or passkey** instead.
+
+**Result:** the box is unticked and the webmail no longer asks for a code at sign-in. Without the code or the key the
+box does not untick: this is intended, so that someone who has taken over your session cannot remove the protection.
+
+## Change your phone
+
+**What it is for:** keep signing in with a new phone without losing access to your account.
+
+**Warning:** **Clear** wipes 2-step verification entirely: the secret, your backup codes and your security keys. Until
+you have finished the steps below, your account is protected by its password only. Keep the old phone at hand until
+the end.
+
+1. Open **Settings**, then **2-Step Verification (TOTP)**.
+2. Click **Clear**, then type a code from the old phone, or a backup code, in **Code**, and click **Test**.
+3. Click **Activate**. A new QR code appears, with new backup codes.
+4. On the new phone, add an account in the authenticator app by photographing this QR code.
+5. Click **test**, enter the code the new phone shows, then tick **Enable 2-Step verification**.
+6. Write down the new backup codes (see [Keep your backup codes](#keep-your-backup-codes)): the old ones no longer
+   work. If you had security keys, add them again.
+
+**Result:** the new phone gives the codes, and the old one no longer gives valid ones.
 
 ## Frequently asked questions
 

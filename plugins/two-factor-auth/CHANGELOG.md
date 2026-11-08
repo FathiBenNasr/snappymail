@@ -5,6 +5,8 @@ Les versions antérieures à 2.30.0 sont décrites, avec leurs mesures, dans
 
 ## [Non publié]
 
+- Guide : tâches absentes ajoutées pour le manuel.
+
 - Guide : affirmations fausses ou dangereuses corrigées après la lecture adversariale.
 
 - Guide relu pour le manuel : corrections de la relecture de fond.

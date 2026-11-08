@@ -11,7 +11,7 @@ connaît (Google Authenticator, Microsoft Authenticator, FreeOTP…).
 
 1. Installez une application à codes sur votre téléphone.
 2. Dans le webmail, ouvrez **Réglages**, puis **Authentification en deux étapes**.
-3. Cliquez sur **Créer une nouvelle clé secrète**. Un code QR s'affiche.
+3. Cliquez sur **Activer**. Un code QR s'affiche.
 4. Dans l'application du téléphone, ajoutez un compte en photographiant le code QR.
 5. Cliquez sur **test**, puis saisissez le code que l'application affiche.
 6. Notez vos **codes de secours** et gardez-les en lieu sûr (voir [« Garder ses codes de secours »](#garder-ses-codes-de-secours)).
@@ -167,6 +167,43 @@ réglages :
 
 **Résultat :** la clé ne permet plus de se connecter. Une personne qui aurait volé votre session ne peut pas
 retirer vos protections sans votre code ou votre clé.
+
+## Désactiver la validation en deux étapes
+
+**À quoi ça sert :** revenir au mot de passe seul, par exemple si vous changez de façon de vous protéger.
+
+**Attention :** tant que la validation est désactivée, le mot de passe suffit à ouvrir votre compte. Si votre organisation
+l'exige, le webmail vous demandera de la remettre en place.
+
+1. Ouvrez **Réglages**, puis **Authentification en deux étapes**.
+2. Décochez **Activer l'authentification en deux étapes**.
+3. Dans la fenêtre **Test d'authentification en deux étapes**, tapez un code de votre application, ou un code de
+   secours, dans **Code**, puis cliquez sur **Test**. Si vous avez une clé de sécurité, vous pouvez cliquer sur
+   **Utiliser une clé de sécurité ou une clé d'accès** à la place.
+
+**Résultat :** la case est décochée, et le webmail ne demande plus de code à la connexion. Sans le code ou la clé, la
+case ne se décoche pas : c'est voulu, pour qu'une personne qui aurait pris votre session ne puisse pas retirer la
+protection.
+
+## Changer de téléphone
+
+**À quoi ça sert :** continuer à vous connecter avec un nouveau téléphone, sans perdre l'accès à votre compte.
+
+**Attention :** **Vider** efface la validation en deux étapes en entier : la clé secrète, vos codes de secours et vos
+clés de sécurité. Tant que vous n'avez pas fini les étapes ci-dessous, votre compte n'est protégé que par son mot de
+passe. Gardez l'ancien téléphone à portée de main jusqu'au bout.
+
+1. Ouvrez **Réglages**, puis **Authentification en deux étapes**.
+2. Cliquez sur **Vider**, puis tapez un code de l'ancien téléphone, ou un code de secours, dans **Code**, et cliquez sur
+   **Test**.
+3. Cliquez sur **Activer**. Un nouveau code QR s'affiche, avec de nouveaux codes de secours.
+4. Sur le nouveau téléphone, ajoutez un compte dans l'application à codes en photographiant ce code QR.
+5. Cliquez sur **test**, saisissez le code que le nouveau téléphone affiche, puis cochez **Activer l'authentification
+   en deux étapes**.
+6. Notez les nouveaux codes de secours (voir [« Garder ses codes de secours »](#garder-ses-codes-de-secours)) : les
+   anciens ne servent plus. Si vous aviez des clés de sécurité, ajoutez-les de nouveau.
+
+**Résultat :** le nouveau téléphone donne les codes, et l'ancien n'en donne plus de valables.
 
 ## Questions fréquentes
 
