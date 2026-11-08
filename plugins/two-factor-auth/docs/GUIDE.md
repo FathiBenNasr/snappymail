@@ -183,7 +183,7 @@ Vérifiez que l'heure de votre téléphone est réglée automatiquement : un cod
 aussi que vous lisez le bon compte dans l'application.
 
 **Après plusieurs essais, plus rien ne passe.**
-Après cinq échecs en quinze minutes, le compte est bloqué un moment, même avec un bon code. Attendez un
+Après plusieurs échecs, les essais sont bloqués un moment, même avec un bon code. Attendez un
 quart d'heure.
 
 **Mon téléphone ou Thunderbird ne reçoit plus le courrier.**

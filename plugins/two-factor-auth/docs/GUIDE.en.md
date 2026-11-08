@@ -173,7 +173,7 @@ Check that your phone's clock is set automatically: a code depends on the time. 
 reading the right account in the app.
 
 **After several tries, nothing gets through.**
-After five failures in fifteen minutes, the account is locked for a while, even with a correct code. Wait a
+After several failures, attempts are blocked for a while, even with a correct code. Wait a
 quarter of an hour.
 
 **My phone or Thunderbird no longer gets mail.**
