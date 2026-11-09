@@ -101,7 +101,7 @@ less safe: whoever reads your recovery mailbox also gets your codes.
    confirmed.
 2. Open **Settings**, then **2-Step Verification**, section **Code by the recovery address**.
 3. Click **Send a code to switch it on**, type the 8-digit code you received and click **Switch on**.
-4. If it is your first second factor, keep the backup codes shown and confirm them as in
+4. If it is your first verification method, keep the backup codes shown and confirm them as in
    [“Keep your backup codes”](#keep-your-backup-codes).
 
 ![The "Code by the recovery address" section, switched on](captures/courriel-2-active.png)
@@ -134,7 +134,7 @@ three codes per quarter of an hour: beyond that, wait or use a backup code.
 
 **Result:** eight new codes. The old ones stay valid until the new ones are confirmed.
 
-## When the key is your only second factor
+## When the key is your only verification method
 
 **What it is for:** not lose access to your account the day the key is not with you.
 

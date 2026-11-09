@@ -5,6 +5,7 @@ Les versions antérieures à 2.30.0 sont décrites, avec leurs mesures, dans
 
 ## [Non publié]
 
+- Guide : dernières corrections après les avis des relecteurs externes.
 - Guide : captures refaites en français, adresses d'essai masquées.
 - Guide : tâches absentes ajoutées pour le manuel.
 

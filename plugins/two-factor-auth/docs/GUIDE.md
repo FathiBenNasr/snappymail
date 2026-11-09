@@ -106,7 +106,7 @@ mais moins sûr : qui lit votre boîte de secours reçoit aussi vos codes.
    compte, et confirmée.
 2. Ouvrez **Réglages**, puis **Authentification en deux étapes**, section **Code par l'adresse de secours**.
 3. Cliquez sur **Envoyer un code pour l'activer**, puis tapez le code de 8 chiffres reçu et cliquez sur **Activer**.
-4. Si c'est votre premier second facteur, gardez les codes de secours affichés et confirmez-les comme dans
+4. Si c'est votre premier moyen de validation, gardez les codes de secours affichés et confirmez-les comme dans
    [« Garder ses codes de secours »](#garder-ses-codes-de-secours).
 
 ![La section « Code par l'adresse de secours », activée](captures/courriel-2-active.png)
@@ -141,7 +141,7 @@ liste.
 
 **Résultat :** huit nouveaux codes. Les anciens restent valables jusqu'à la confirmation des nouveaux.
 
-## Quand la clé est votre seul second facteur
+## Quand la clé est votre seul moyen de validation
 
 **À quoi ça sert :** ne pas perdre l'accès à votre compte le jour où la clé n'est pas avec vous.
 
