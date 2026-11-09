@@ -31,7 +31,7 @@ Thunderbird, Outlook) en demandent un à la place de votre mot de passe : créez
 
 **Résultat :** vous êtes connecté. Un code ne sert qu'une fois et change toutes les 30 secondes.
 
-![Un refus à la connexion, et le rappel du code](captures/avant-1-rappel.png)
+![Un refus à la connexion, et le rappel du code](captures/avant-1-rappel-fr.png)
 
 Si la connexion est refusée, le webmail rappelle qu'il faut aussi le code, un code de secours ou la clé. Le
 même message s'affiche pour tout le monde : il ne dit pas si un compte a la validation en deux étapes.

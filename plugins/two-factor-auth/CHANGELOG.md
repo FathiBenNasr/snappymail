@@ -5,6 +5,7 @@ Les versions antérieures à 2.30.0 sont décrites, avec leurs mesures, dans
 
 ## [Non publié]
 
+- Guide : captures refaites en français, adresses d'essai masquées.
 - Guide : tâches absentes ajoutées pour le manuel.
 
 - Guide : affirmations fausses ou dangereuses corrigées après la lecture adversariale.
