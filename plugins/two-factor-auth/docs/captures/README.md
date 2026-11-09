@@ -28,3 +28,9 @@ visibles sont ceux de ce compte, qui n'existe plus) :
 ⚠️ `preparer.sh` recopie **tout** le dossier de captures du conteneur : des
 captures d'un autre banc (`forcer.js`) peuvent s'y trouver. Ne garder que celles
 du banc lancé.
+
+## Variantes françaises (9 novembre 2026)
+
+Même écran que l'originale, interface en français ; l'originale (anglaise) reste pour l'édition anglaise.
+
+- `avant-1-rappel-fr.png` : variante française de `avant-1-rappel.png`
