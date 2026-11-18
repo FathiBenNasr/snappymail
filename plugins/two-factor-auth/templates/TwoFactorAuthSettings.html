@@ -148,6 +148,7 @@
 			<p><span data-i18n="PLUGIN_2FA/LABEL_SMS_NUMBER"></span> <strong dir="ltr" style="unicode-bidi: plaintext" data-bind="text: smsMasked"></strong></p>
 			<p class="twofactor-sms-on" data-bind="visible: smsOn"><strong data-i18n="PLUGIN_2FA/EMAIL_CODE_ON"></strong>
 				&nbsp; <a class="btn twofactor-sms-off" data-bind="click: smsDisable" data-i18n="PLUGIN_2FA/BUTTON_EMAIL_OFF"></a></p>
+			<p class="alert twofactor-sms-suspended" data-bind="visible: smsSuspended() && !smsOn()" data-i18n="PLUGIN_2FA/SMS_CODE_SUSPENDED"></p>
 			<p class="muted" data-bind="visible: !smsOn() && !secondFactorOn()" data-i18n="PLUGIN_2FA/SMS_CODE_NEEDS_FACTOR"></p>
 			<div data-bind="visible: !smsOn() && secondFactorOn() && !pending()">
 				<a class="btn twofactor-sms-send" data-bind="click: smsSend, css: {disabled: smsBusy}" data-i18n="PLUGIN_2FA/BUTTON_SMS_SEND"></a>

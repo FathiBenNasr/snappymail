@@ -1,6 +1,25 @@
 # two-factor-auth — TODO
 
 
+## 18 novembre 2026 — 2.35.1 : les constats de la revue indépendante (`docs/revues/2026-11-18-revue-sms.md`)
+
+Chaque constat a été **vérifié contre le code avant d'être corrigé** ; aucun n'était faux. Un seul est resté en partie hors de portée du greffon (7).
+
+| # | Constat | Vérifié | Correction |
+|---|---|---|---|
+| 1 | SMS non lié au numéro enrôlé | vrai : `SmsOn = true` seulement, la console relit le mobile *courant* | La console publie une **empreinte HMAC à clé** du numéro entier (`mobile.empreinte`, clé dérivée de `mfa_key`, jamais le numéro). L'activation garde `SmsNum` ; chaque code SMS garde l'empreinte à laquelle il est parti (`m`) ; émission et jugement exigent `SmsNum == empreinte courante`. Si elle a changé : **facteur suspendu** (`SmsOn`, `SmsNum`, `SmsCodes` retirés, `SmsSuspended` posé), plus rien n'est envoyé, le webmail le dit, et la console avertit le titulaire (`canal: sms-suspendu`, sans code ni numéro, une fois). Un code parti vers l'ancien numéro ne vaut plus. Sans empreinte publiée, le SMS n'est pas offert (échoue fermé). |
+| 4 | « Jamais seul » tenu par des drapeaux | vrai : preuve R3 reproduite | `otherUsable()` : TOTP actif, clé lisible, ou `EmailOn` **avec** une adresse de secours vérifiée et un domaine qui permet le code courriel (`recoveryAddress`). L'enrôlement, l'émission et le jugement l'exigent ; `SmsOn` reste enregistré quand seule l'utilisabilité manque (suspendu, pas supprimé). |
+| 5 | Épuisement des plafonds par un anonyme | vrai : preuve R4 | Un navigateur qui a **terminé une connexion complète** de ce compte (mot de passe + second facteur) est mémorisé comme empreinte à clé (`Known`, 5 au plus) et dispose d'une **réserve** : +2 envois par quart d'heure, +5 par jour, pour les deux canaux. Un anonyme (qui ne connaît que l'adresse) ne peut donc pas épuiser le secours du titulaire *sur son navigateur habituel* ; il reste borné pour un navigateur jamais vu (3/15 min, 10/jour) et par adresse IP (10/h, sans réserve). Choix assumé : un plafond par navigateur seul ne vaudrait rien, l'attaquant vide ses cookies ; la réserve, elle, ne s'obtient qu'en réussissant une connexion. Reste : un titulaire sur un appareil neuf peut attendre jusqu'à 15 min. |
+| 6 | Mauvais codes non comptés avant le mot de passe | vrai : `n` restait à 0 | Un mauvais code à 8 chiffres est compté contre les codes **de ce navigateur** seulement (jamais contre le verrou du compte : n'importe qui peut en envoyer un) ; 5 essais, puis ces codes sont perdus. Écrit seulement si ce navigateur a un code vivant : un inconnu n'écrit rien. |
+| 8 | `codes-debit/` jamais purgé | vrai | Purge des compteurs de plus d'une heure (un appel sur 50). |
+| 10 | Session ouverte par SMS non marquée | vrai | `LastFactor` (`f`: `sms`, `email`, `backup`, `totp`) dans le record, et une ligne `TFA: login_factor=sms for <compte>` au journal. |
+| 7 | Bouton offert sans mobile publié | vrai, **hors greffon** | La console planifie maintenant `sms:mobiles` (minuteur horaire). Le greffon n'offre rien sans `etat/…mobile.empreinte` pour le compte, mais le bouton de l'écran de connexion reste offert à tous (il ne peut pas savoir qui a un mobile sans le dire). À déployer **dans cet ordre** : minuteur, premier passage, puis `sms_code`. Un titulaire créé après le dernier passage attend le suivant (≤ 1 h) ; un déclenchement à la création de compte reste à faire. |
+
+* **Reste, assumé** : `DoSmsCodeRequest` (enrôlement) n'exige pas de preuve pour *envoyer* (3 SMS/15 min vers le titulaire, la preuve est exigée à l'activation) ; le masque donne trois chiffres à la session ; la politique `code_secours` de domaine ne retire que le courriel (pas de politique `code_sms`).
+* **ACL de l'annuaire** : l'ancien arbre `dc=convergent,dc=tn` a `to * by self write` (`deploy/ldap/10-skyconsole-acl.ldif:46`) : si c'est lui qui authentifie smail, **`mobile` y est modifiable par la personne avec son seul mot de passe**. L'empreinte (1) en referme les effets (le facteur se suspend et le titulaire est averti), mais ne remplace pas de vérifier quel arbre sert smail et de retirer `by self write` sur `mobile` (`deploy/ldap/verifier-acl.sh`). Vérification faite par le coordinateur.
+* **Correction du texte de 2.35.0** : « plafonds partagés avec le courriel » était faux pour le compte (`SmsSends` ≠ `EmailSends`, soit 3 + 3 par quart d'heure) ; seul le plafond par adresse IP est commun. Et « 5 essais » ne valait qu'**après** le mot de passe, jusqu'à cette version (6).
+* **Essais** : PHP Actions 426, Record 131, WebAuthn 92 ; JS 68 — suites entières vertes. Mutations : 21 sur 22 tuées ; la survivante (`'' === $sEmp` à l'émission) est équivalente : `smsMasked` refuse déjà plus haut sans empreinte, la garde est redondante (défense en profondeur).
+
 ## 18 novembre 2026 — 2.35.0 : le code par SMS, en secours, et les avis croisés
 
 * **Décision du propriétaire** (phase de tests) : un second facteur de remplacement par SMS quand les autres ne sont

@@ -15,6 +15,18 @@ Les versions antérieures à 2.30.0 sont décrites, avec leurs mesures, dans
 
 - Guide relu pour le manuel : la connexion par code reçu par courriel dit à quoi elle sert.
 
+## 2.35.1 — 18 novembre 2026
+
+* **Le code par SMS est lié au numéro enrôlé.** Si le mobile de la fiche change, le facteur SMS est suspendu, un message
+  vous le dit dans les réglages, le titulaire est averti par courriel, et il faut l'enrôler de nouveau avec le nouveau numéro.
+* **« Jamais seul » compte les moyens utilisables** : le code par courriel ne compte que si une adresse de secours vérifiée
+  existe et que votre organisation le permet.
+* **Un navigateur qui s'est déjà connecté en entier garde une réserve de demandes de code** : quelqu'un qui ne connaît que
+  votre adresse ne peut plus vous priver de vos codes depuis ce navigateur.
+* **Les mauvais codes à 8 chiffres sont comptés avant le mot de passe** (5 essais par navigateur, puis le code est perdu).
+* La façon dont une session a été ouverte (SMS, courriel, code de secours, application) est notée au journal.
+* Les compteurs par adresse IP de plus d'une heure sont purgés.
+
 ## 2.35.0 — 18 novembre 2026
 
 * **Un code par SMS, en secours seulement.** Quand les autres seconds facteurs ne sont pas possibles, un code de

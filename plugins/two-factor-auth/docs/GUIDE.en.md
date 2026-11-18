@@ -146,6 +146,10 @@ once, in the browser that asked for it. At most three codes per quarter of an ho
 recovery address if you have one). And every time a code is asked for by email, you are warned by SMS. If it was not
 you, change your password. If the section does not appear, your profile has no mobile.
 
+If the mobile number of your profile changes, the code by SMS is **suspended**: a message appears in the section and you
+are warned by email. To switch it on again, send a code to the new number and confirm it. It only counts while another
+way is **really usable** (for example, the code by the recovery address needs a confirmed recovery address).
+
 ## Regenerate your backup codes
 
 **What it is for:** get a new list when you have used almost all your codes, or lost the list.

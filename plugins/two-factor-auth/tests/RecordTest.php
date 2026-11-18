@@ -228,36 +228,37 @@ $aPn = TwoFactorRecord::startPending($aE, array('123456789'), null, 'b1', 1000, 
 check('… and plain regenerated codes do not', TwoFactorRecord::confirmPending($aPn, '123456789', 'b1', 1001, $sKeyE)[1]['EmailOn'] ?? false, false);
 
 /* ---- 2.35.0: the code by SMS, a channel of its own, never alone ---- */
+$mE = \str_repeat('a', 64); $mE2 = \str_repeat('b', 64);
 $aTo = $aE; $aTo['Enable'] = true;               // a record with an authenticator on
-$aSm = TwoFactorRecord::addEmailCode($aTo, '87654321', 'b1', 'login', 1000, $sKeyE, 'sms');
+$aSm = TwoFactorRecord::addEmailCode($aTo, '87654321', 'b1', 'login', 1000, $sKeyE, 'sms', $mE);
 check('an SMS code is kept in its own list, not the email one', array(\count($aSm['SmsCodes']), isset($aSm['EmailCodes']) ? \count($aSm['EmailCodes']) : 0, \count($aSm['SmsSends'])), array(1, 0, 1));
 check('… hashed with its own prefix: the stored hash is not the email one', $aSm['SmsCodes'][0]['h'] !== TwoFactorRecord::hashCode('email|87654321', $sKeyE), true);
-check('SMS off: no SMS code opens a login, even a right one', TwoFactorRecord::check($aSm, '87654321', $sKeyE, 1001, $fNo, array('b' => 'b1', 'p' => 'login', 'c' => 'both'))[0], 'wrong');
-$aSm['SmsOn'] = true;
-check('SMS on beside an authenticator: the right code opens the login', TwoFactorRecord::check($aSm, '87654321', $sKeyE, 1001, $fNo, array('b' => 'b1', 'p' => 'login', 'c' => 'both'))[0], 'ok');
-check('… and answers to the sms channel alone as well', TwoFactorRecord::check($aSm, '87654321', $sKeyE, 1001, $fNo, array('b' => 'b1', 'p' => 'login', 'c' => 'sms'))[0], 'ok');
+check('SMS off: no SMS code opens a login, even a right one', TwoFactorRecord::check($aSm, '87654321', $sKeyE, 1001, $fNo, array('b' => 'b1', 'p' => 'login', 'c' => 'both', 'm' => $mE))[0], 'wrong');
+$aSm['SmsOn'] = true; $aSm['SmsNum'] = $mE;
+check('SMS on beside an authenticator: the right code opens the login', TwoFactorRecord::check($aSm, '87654321', $sKeyE, 1001, $fNo, array('b' => 'b1', 'p' => 'login', 'c' => 'both', 'm' => $mE))[0], 'ok');
+check('… and answers to the sms channel alone as well', TwoFactorRecord::check($aSm, '87654321', $sKeyE, 1001, $fNo, array('b' => 'b1', 'p' => 'login', 'c' => 'sms', 'm' => $mE))[0], 'ok');
 check('… but not where only the email channel is asked (the session proofs)', TwoFactorRecord::check($aSm, '87654321', $sKeyE, 1001, $fNo, array('b' => 'b1', 'p' => 'login'))[0], 'wrong');
 check('… nor with no context at all', TwoFactorRecord::check($aSm, '87654321', $sKeyE, 1001, $fNo)[0], 'wrong');
-check('… nor in the "reauth" purpose', TwoFactorRecord::check($aSm, '87654321', $sKeyE, 1001, $fNo, array('b' => 'b1', 'p' => 'reauth', 'c' => 'both'))[0], 'wrong');
-check('… nor from another browser', TwoFactorRecord::check($aSm, '87654321', $sKeyE, 1001, $fNo, array('b' => 'b2', 'p' => 'login', 'c' => 'both'))[0], 'wrong');
-check('… nor after ten minutes', TwoFactorRecord::check($aSm, '87654321', $sKeyE, 1000 + TwoFactorRecord::EMAIL_TTL, $fNo, array('b' => 'b1', 'p' => 'login', 'c' => 'both'))[0], 'wrong');
-[$sOk, $aSpent] = TwoFactorRecord::check($aSm, '87654321', $sKeyE, 1001, $fNo, array('b' => 'b1', 'p' => 'login', 'c' => 'both'));
-check('… used once', TwoFactorRecord::check($aSpent, '87654321', $sKeyE, 1002, $fNo, array('b' => 'b1', 'p' => 'login', 'c' => 'both'))[0], 'wrong');
+check('… nor in the "reauth" purpose', TwoFactorRecord::check($aSm, '87654321', $sKeyE, 1001, $fNo, array('b' => 'b1', 'p' => 'reauth', 'c' => 'both', 'm' => $mE))[0], 'wrong');
+check('… nor from another browser', TwoFactorRecord::check($aSm, '87654321', $sKeyE, 1001, $fNo, array('b' => 'b2', 'p' => 'login', 'c' => 'both', 'm' => $mE))[0], 'wrong');
+check('… nor after ten minutes', TwoFactorRecord::check($aSm, '87654321', $sKeyE, 1000 + TwoFactorRecord::EMAIL_TTL, $fNo, array('b' => 'b1', 'p' => 'login', 'c' => 'both', 'm' => $mE))[0], 'wrong');
+[$sOk, $aSpent] = TwoFactorRecord::check($aSm, '87654321', $sKeyE, 1001, $fNo, array('b' => 'b1', 'p' => 'login', 'c' => 'both', 'm' => $mE));
+check('… used once', TwoFactorRecord::check($aSpent, '87654321', $sKeyE, 1002, $fNo, array('b' => 'b1', 'p' => 'login', 'c' => 'both', 'm' => $mE))[0], 'wrong');
 $aT3 = $aSm;
-for ($i = 0; $i < TwoFactorRecord::EMAIL_TRIES; ++$i) { [, $aT3] = TwoFactorRecord::takeEmailCode($aT3, '00000000', 'b1', 'login', 1001, $sKeyE, 'sms'); }
-check('five wrong tries discard the SMS code of that browser', array(\count($aT3['SmsCodes']), TwoFactorRecord::takeEmailCode($aT3, '87654321', 'b1', 'login', 1002, $sKeyE, 'sms')[0]), array(0, false));
+for ($i = 0; $i < TwoFactorRecord::EMAIL_TRIES; ++$i) { [, $aT3] = TwoFactorRecord::takeEmailCode($aT3, '00000000', 'b1', 'login', 1001, $sKeyE, 'sms', $mE); }
+check('five wrong tries discard the SMS code of that browser', array(\count($aT3['SmsCodes']), TwoFactorRecord::takeEmailCode($aT3, '87654321', 'b1', 'login', 1002, $sKeyE, 'sms', $mE)[0]), array(0, false));
 $aBoth = TwoFactorRecord::addEmailCode($aSm, '11112222', 'b1', 'login', 1000, $sKeyE);
 $aBoth['EmailOn'] = true;
 check('the two channels answer each for its own code', array(
-	TwoFactorRecord::check($aBoth, '11112222', $sKeyE, 1001, $fNo, array('b' => 'b1', 'p' => 'login', 'c' => 'both'))[0],
-	TwoFactorRecord::check($aBoth, '87654321', $sKeyE, 1001, $fNo, array('b' => 'b1', 'p' => 'login', 'c' => 'both'))[0]), array('ok', 'ok'));
+	TwoFactorRecord::check($aBoth, '11112222', $sKeyE, 1001, $fNo, array('b' => 'b1', 'p' => 'login', 'c' => 'both', 'm' => $mE))[0],
+	TwoFactorRecord::check($aBoth, '87654321', $sKeyE, 1001, $fNo, array('b' => 'b1', 'p' => 'login', 'c' => 'both', 'm' => $mE))[0]), array('ok', 'ok'));
 check('the SMS channel does not take the email code, nor the reverse', array(
-	TwoFactorRecord::check($aBoth, '11112222', $sKeyE, 1001, $fNo, array('b' => 'b1', 'p' => 'login', 'c' => 'sms'))[0],
+	TwoFactorRecord::check($aBoth, '11112222', $sKeyE, 1001, $fNo, array('b' => 'b1', 'p' => 'login', 'c' => 'sms', 'm' => $mE))[0],
 	TwoFactorRecord::check($aBoth, '87654321', $sKeyE, 1001, $fNo, array('b' => 'b1', 'p' => 'login', 'c' => 'email'))[0]), array('wrong', 'wrong'));
 // Never alone.
 $aAlone = $aSm; $aAlone['Enable'] = false;
 check('SMS on with no other factor: not active, not a way in', array(TwoFactorRecord::smsActive($aAlone, $sKeyE), TwoFactorRecord::isOn($aAlone, $sKeyE), TwoFactorRecord::hasFactor($aAlone, $sKeyE)), array(false, false, false));
-check('… and its code opens nothing', TwoFactorRecord::check($aAlone, '87654321', $sKeyE, 1001, $fNo, array('b' => 'b1', 'p' => 'login', 'c' => 'both'))[0], 'wrong');
+check('… and its code opens nothing', TwoFactorRecord::check($aAlone, '87654321', $sKeyE, 1001, $fNo, array('b' => 'b1', 'p' => 'login', 'c' => 'both', 'm' => $mE))[0], 'wrong');
 check('… it is dropped when the record is read or written', array(isset(TwoFactorRecord::normalise($aAlone, $sKeyE)['SmsOn']), isset(TwoFactorRecord::dropSmsAlone($aAlone, $sKeyE)['SmsCodes'])), array(false, false));
 check('… but kept while another factor stands (authenticator, or email)', array(isset(TwoFactorRecord::dropSmsAlone($aSm, $sKeyE)['SmsOn']), isset(TwoFactorRecord::dropSmsAlone(\array_merge($aAlone, array('EmailOn' => true)), $sKeyE)['SmsOn'])), array(true, true));
 $aKeyBox = $aAlone; $aKeyBox['PasskeysBox'] = 'not a box';
@@ -267,6 +268,43 @@ check('a security key counts as the other factor', TwoFactorRecord::smsActive($a
 // Sends are counted per channel.
 $aSn = $aE; $aSn['SmsSends'] = array(1000, 1001, 1002);
 check('SMS sends: 3 in 15 min is the cap, and the email count is separate', array(TwoFactorRecord::emailSendAllowed($aSn, 1003, 'sms'), TwoFactorRecord::emailSendAllowed($aSn, 1003)), array(false, true));
+
+/* ---- 2.35.1: bound to the number, usable factors, reserve, live codes ---- */
+$aCtx = fn (array $x = array()) => $x + array('b' => 'b1', 'p' => 'login', 'c' => 'both', 'm' => $mE);
+check('bound: the number changed since the enrolment — the code sent to the old one opens nothing', TwoFactorRecord::check($aSm, '87654321', $sKeyE, 1001, $fNo, $aCtx(array('m' => $mE2)))[0], 'wrong');
+check('bound: no fingerprint published (console without key): no SMS way in', TwoFactorRecord::check($aSm, '87654321', $sKeyE, 1001, $fNo, $aCtx(array('m' => '')))[0], 'wrong');
+$aNoNum = $aSm; unset($aNoNum['SmsNum']);
+check('bound: an enrolment with no number kept (legacy) does not count', TwoFactorRecord::check($aNoNum, '87654321', $sKeyE, 1001, $fNo, $aCtx())[0], 'wrong');
+check('bound: a code issued for the old number is not taken even when the record is re-bound to the new one',
+	TwoFactorRecord::check(array_merge($aSm, array('SmsNum' => $mE2)), '87654321', $sKeyE, 1001, $fNo, $aCtx(array('m' => $mE2)))[0], 'wrong');
+check('bound: smsBound', array(TwoFactorRecord::smsBound($aSm, $mE), TwoFactorRecord::smsBound($aSm, $mE2), TwoFactorRecord::smsBound($aSm, '')), array(true, false, false));
+// Usable factors.
+$aEm = $aSm; $aEm['Enable'] = false; $aEm['EmailOn'] = true;
+check('usable: EmailOn counts as the other factor only while the email way can be used',
+	array(TwoFactorRecord::otherUsable($aEm, $sKeyE, true), TwoFactorRecord::otherUsable($aEm, $sKeyE, false), TwoFactorRecord::otherUsable($aSm, $sKeyE, false)), array(true, false, true));
+check('usable: the email factor is on but cannot answer: the SMS alone opens nothing',
+	TwoFactorRecord::check($aEm, '87654321', $sKeyE, 1001, $fNo, $aCtx(array('u' => false)))[0], 'wrong');
+check('usable: … and where it can answer, it does', TwoFactorRecord::check($aEm, '87654321', $sKeyE, 1001, $fNo, $aCtx(array('u' => true)))[0], 'ok');
+check('usable: an authenticator that is on needs no help', TwoFactorRecord::check($aSm, '87654321', $sKeyE, 1001, $fNo, $aCtx(array('u' => false)))[0], 'ok');
+check('usable: the flag is kept when only the usability fails (not dropped, only suspended)', isset(TwoFactorRecord::dropSmsAlone($aEm, $sKeyE)['SmsOn']), true);
+// The reserve of a browser that has signed in.
+$aKn = TwoFactorRecord::addKnownBrowser($aE, 'bX', $sKeyE);
+check('known: remembered as a keyed hash, never the token', array(TwoFactorRecord::isKnownBrowser($aKn, 'bX', $sKeyE), TwoFactorRecord::isKnownBrowser($aKn, 'bY', $sKeyE), TwoFactorRecord::isKnownBrowser($aKn, '', $sKeyE), \str_contains(\json_encode($aKn), 'bX')), array(true, false, false, false));
+$aKm = $aE; for ($i = 0; $i < 8; ++$i) { $aKm = TwoFactorRecord::addKnownBrowser($aKm, 'b' . $i, $sKeyE); }
+check('known: at most five, the oldest go, and one browser is kept once', array(\count($aKm['Known']), TwoFactorRecord::isKnownBrowser($aKm, 'b0', $sKeyE), TwoFactorRecord::isKnownBrowser($aKm, 'b7', $sKeyE), \count(TwoFactorRecord::addKnownBrowser($aKm, 'b7', $sKeyE)['Known'])), array(5, false, true, 5));
+$aRs = $aE; $aRs['SmsSends'] = array(1000, 1001, 1002);
+check('reserve: three in 15 minutes stop an unknown browser, a known one has two more',
+	array(TwoFactorRecord::emailSendAllowed($aRs, 1003, 'sms', false), TwoFactorRecord::emailSendAllowed($aRs, 1003, 'sms', true)), array(false, true));
+$aRs['SmsSends'] = array(1000, 1001, 1002, 1003, 1004);
+check('reserve: … two more, not three', TwoFactorRecord::emailSendAllowed($aRs, 1005, 'sms', true), false);
+$aRs['SmsSends'] = \range(10000, 10000 + 9 * 1000, 1000);
+check('reserve: ten in a day stop an unknown browser; a known one has five more', array(TwoFactorRecord::emailSendAllowed($aRs, 20000, 'sms', false), TwoFactorRecord::emailSendAllowed($aRs, 20000, 'sms', true)), array(false, true));
+// Live codes, and the way a login was opened.
+check('live codes: only for this browser, not expired', array(TwoFactorRecord::hasLiveCode($aSm, 'b1', 1001, $sKeyE), TwoFactorRecord::hasLiveCode($aSm, 'b2', 1001, $sKeyE), TwoFactorRecord::hasLiveCode($aSm, 'b1', 1000 + TwoFactorRecord::EMAIL_TTL, $sKeyE), TwoFactorRecord::hasLiveCode($aSm, '', 1001, $sKeyE)), array(true, false, false, false));
+check('the way a login was opened is kept: sms, email, backup', array(
+	TwoFactorRecord::check($aSm, '87654321', $sKeyE, 1001, $fNo, $aCtx())[1]['LastFactor']['f'] ?? '',
+	TwoFactorRecord::check($aBoth, '11112222', $sKeyE, 1001, $fNo, $aCtx(array('u' => true)))[1]['LastFactor']['f'] ?? '',
+	TwoFactorRecord::check(array_merge($aE, array('BackupHashes' => array(TwoFactorRecord::hashCode('111111111', $sKeyE)))), '111111111', $sKeyE, 1001, $fNo)[1]['LastFactor']['f'] ?? ''), array('sms', 'email', 'backup'));
 
 echo "\n", $iFail ? "$iFail failed\n" : "0 failed\n";
 exit($iFail ? 1 : 0);

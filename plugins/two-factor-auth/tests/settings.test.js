@@ -273,3 +273,11 @@ test('2.35.0: switching it off asks for a current factor', () => {
 	appels[0].cb(0, { Result: { Passkeys: [], On: true, SmsOffered: true, SmsOn: false } });
 	assert.strictEqual(v.smsOn(), false);
 });
+
+test('2.35.1: a suspended SMS factor (the number changed) is shown as such, and clears once enrolled again', () => {
+	const { v } = vueAvecServeur({ Auth: true });
+	v.applyInfo({ Passkeys: [], On: true, SmsOffered: true, SmsMasked: '+216 •• ••• 111', SmsOn: false, SmsSuspended: true });
+	assert.deepStrictEqual([v.smsOn(), v.smsSuspended()], [false, true]);
+	v.applyInfo({ Passkeys: [], On: true, SmsOffered: true, SmsOn: true, SmsSuspended: false });
+	assert.deepStrictEqual([v.smsOn(), v.smsSuspended()], [true, false]);
+});

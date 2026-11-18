@@ -397,18 +397,91 @@ final class TwoFactorRecord
 	 * Whether the SMS code is a way in for this record: switched on AND another
 	 * factor is still there. Never the only one.
 	 */
-	public static function smsActive(array $a, string $sKey) : bool
+	public static function smsActive(array $a, string $sKey, bool $bEmailUsable = false) : bool
 	{
-		return !empty($a['SmsOn']) && self::hasFactor($a, $sKey);
+		return !empty($a['SmsOn']) && self::otherUsable($a, $sKey, $bEmailUsable);
+	}
+
+	/**
+	 * 2.35.1: "never alone" is about what can actually be USED, not about flags: a TOTP that is on, a key that
+	 * reads, or the email factor while a verified recovery address on a permitted domain exists
+	 * ($bEmailUsable, decided by the plugin). An `EmailOn` whose address was removed, or whose domain turned the
+	 * email code off, leaves the SMS as the only way: it is then not a way in.
+	 */
+	public static function otherUsable(array $a, string $sKey, bool $bEmailUsable) : bool
+	{
+		return !empty($a['Enable']) || (!empty($a['EmailOn']) && $bEmailUsable) || (bool) self::passkeys($a, $sKey);
+	}
+
+	/**
+	 * 2.35.1: the SMS factor is bound to the number it was enrolled with. The console publishes a KEYED
+	 * fingerprint of the whole number ($sBound; never the number), the enrolment keeps it (`SmsNum`), and a number
+	 * that changed since (recycled, rewritten in the directory) is not the one that was proved to answer.
+	 */
+	public static function smsBound(array $a, string $sBound) : bool
+	{
+		return '' !== $sBound && '' !== (string) ($a['SmsNum'] ?? '') && \hash_equals((string) $a['SmsNum'], $sBound);
+	}
+
+	/** Whether a code (either channel) for this browser is still alive: only then may a wrong try be counted before the password. */
+	public static function hasLiveCode(array $a, string $sBinding, int $iNow, string $sKey) : bool
+	{
+		if ('' === $sBinding) {
+			return false;
+		}
+		$sB = self::hashCode($sBinding, $sKey);
+		foreach (array('EmailCodes', 'SmsCodes') as $sList) {
+			foreach ((array) ($a[$sList] ?? array()) as $c) {
+				if (\is_array($c) && (int) ($c['e'] ?? 0) > $iNow && \hash_equals((string) ($c['b'] ?? ''), $sB)) {
+					return true;
+				}
+			}
+		}
+		return false;
 	}
 
 	/** Whether one more code may be sent for this account now. */
-	public static function emailSendAllowed(array $a, int $iNow, string $sChannel = 'email') : bool
+	public static function emailSendAllowed(array $a, int $iNow, string $sChannel = 'email', bool $bKnown = false) : bool
 	{
 		[, $sSends] = self::channel($sChannel);
 		$aSends = \array_filter((array) ($a[$sSends] ?? array()), fn ($t) => \is_int($t) && $t > $iNow - 86400 && $t <= $iNow);
 		$iRecent = \count(\array_filter($aSends, fn ($t) => $t > $iNow - self::EMAIL_SENDS_WINDOW));
-		return \count($aSends) < self::EMAIL_SENDS_DAY && $iRecent < self::EMAIL_SENDS;
+		// 2.35.1: a browser that already completed a full sign-in of this account has a reserve, so that someone
+		// who knows only the address cannot use up the owner's codes from a browser of their own.
+		return \count($aSends) < self::EMAIL_SENDS_DAY + ($bKnown ? self::KNOWN_RESERVE_DAY : 0)
+			&& $iRecent < self::EMAIL_SENDS + ($bKnown ? self::KNOWN_RESERVE : 0);
+	}
+
+	/** Browsers that completed a full sign-in, kept as keyed hashes (the last KNOWN_MAX). */
+	public const KNOWN_MAX = 5;
+	/** The extra sends a known browser may ask for, per 15 minutes and per day. */
+	public const KNOWN_RESERVE = 2;
+	public const KNOWN_RESERVE_DAY = 5;
+
+	public static function isKnownBrowser(array $a, string $sBinding, string $sKey) : bool
+	{
+		if ('' === $sBinding) {
+			return false;
+		}
+		$sB = self::hashCode('known|' . $sBinding, $sKey);
+		foreach ((array) ($a['Known'] ?? array()) as $s) {
+			if (\is_string($s) && \hash_equals($s, $sB)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	public static function addKnownBrowser(array $a, string $sBinding, string $sKey) : array
+	{
+		if ('' === $sBinding) {
+			return $a;
+		}
+		$sB = self::hashCode('known|' . $sBinding, $sKey);
+		$aList = \array_values(\array_filter((array) ($a['Known'] ?? array()), fn ($s) => \is_string($s) && !\hash_equals($s, $sB)));
+		$aList[] = $sB;
+		$a['Known'] = \array_slice($aList, -self::KNOWN_MAX);
+		return $a;
 	}
 
 	/**
@@ -416,13 +489,15 @@ final class TwoFactorRecord
 	 * purpose it is for, its expiry. At most EMAIL_LIVE are kept, the oldest
 	 * goes first; expired ones are dropped. The send is counted.
 	 */
-	public static function addEmailCode(array $a, string $sCode, string $sBinding, string $sPurpose, int $iNow, string $sKey, string $sChannel = 'email') : array
+	public static function addEmailCode(array $a, string $sCode, string $sBinding, string $sPurpose, int $iNow, string $sKey, string $sChannel = 'email', string $sBound = '') : array
 	{
 		[$sCodes, $sSends, $sPrefix] = self::channel($sChannel);
 		$aList = \array_values(\array_filter((array) ($a[$sCodes] ?? array()),
 			fn ($c) => \is_array($c) && (int) ($c['e'] ?? 0) > $iNow));
 		$aList[] = array('h' => self::hashCode($sPrefix . $sCode, $sKey), 'b' => self::hashCode($sBinding, $sKey),
-			'p' => $sPurpose, 'e' => $iNow + self::EMAIL_TTL, 'n' => 0);
+			'p' => $sPurpose, 'e' => $iNow + self::EMAIL_TTL, 'n' => 0)
+			// 2.35.1: an SMS code remembers the number fingerprint it was sent to.
+			+ ('' !== $sBound ? array('m' => $sBound) : array());
 		$a[$sCodes] = \array_slice($aList, -self::EMAIL_LIVE);
 		$aSends = \array_values(\array_filter((array) ($a[$sSends] ?? array()), fn ($t) => \is_int($t) && $t > $iNow - 86400));
 		$aSends[] = $iNow;
@@ -436,7 +511,7 @@ final class TwoFactorRecord
 	 * the codes of that browser and purpose, which go after EMAIL_TRIES.
 	 * Compared in constant time.
 	 */
-	public static function takeEmailCode(array $a, string $sCode, string $sBinding, string $sPurpose, int $iNow, string $sKey, string $sChannel = 'email') : array
+	public static function takeEmailCode(array $a, string $sCode, string $sBinding, string $sPurpose, int $iNow, string $sKey, string $sChannel = 'email', string $sBound = '') : array
 	{
 		[$sCodes, , $sPrefix] = self::channel($sChannel);
 		$sHash = self::hashCode($sPrefix . $sCode, $sKey);
@@ -447,7 +522,8 @@ final class TwoFactorRecord
 			if (!\is_array($c) || (int) ($c['e'] ?? 0) <= $iNow) {
 				continue;
 			}
-			$bMine = '' !== $sBinding && $sPurpose === ($c['p'] ?? null) && \hash_equals((string) ($c['b'] ?? ''), $sB);
+			$bMine = '' !== $sBinding && $sPurpose === ($c['p'] ?? null) && \hash_equals((string) ($c['b'] ?? ''), $sB)
+				&& ('sms' !== $sChannel || ('' !== $sBound && \hash_equals((string) ($c['m'] ?? ''), $sBound)));
 			if ($bMine && !$bRight && \hash_equals((string) ($c['h'] ?? ''), $sHash)) {
 				$bRight = true;
 				continue;
@@ -541,16 +617,25 @@ final class TwoFactorRecord
 			// enrolment.
 			$sC = (string) ($aEmail['c'] ?? 'email');
 			$sP = (string) ($aEmail['p'] ?? '');
+			$sM = (string) ($aEmail['m'] ?? '');
 			$bEmail = null !== $aEmail && \in_array($sC, array('email', 'both'), true) && (!empty($a['EmailOn']) || 'enroll' === $sP);
-			$bSms = null !== $aEmail && \in_array($sC, array('sms', 'both'), true) && (self::smsActive($a, $sKey) || 'enroll' === $sP);
+			// 2.35.1: the SMS channel needs another USABLE factor and the number it was enrolled with
+			// ('u': the email factor can be used; 'm': the fingerprint of the current number).
+			$bSms = null !== $aEmail && \in_array($sC, array('sms', 'both'), true) && '' !== $sM
+				&& ('enroll' === $sP || (self::smsActive($a, $sKey, true === ($aEmail['u'] ?? false)) && self::smsBound($a, $sM)));
 			if (!$bEmail && !$bSms) {
 				return array('wrong', self::recordFailure($a, $iNow));
 			}
 			$bOk = false;
+			$sWhich = '';
 			foreach (array('email' => $bEmail, 'sms' => $bSms) as $sChan => $bTry) {
 				if ($bTry && !$bOk) {
-					[$bOk, $a] = self::takeEmailCode($a, $sCode, (string) ($aEmail['b'] ?? ''), $sP, $iNow, $sKey, $sChan);
+					[$bOk, $a] = self::takeEmailCode($a, $sCode, (string) ($aEmail['b'] ?? ''), $sP, $iNow, $sKey, $sChan, $sM);
+					$sWhich = $sChan;
 				}
+			}
+			if ($bOk) {
+				$a['LastFactor'] = array('f' => $sWhich, 't' => $iNow);
 			}
 			return $bOk ? array('ok', self::recordSuccess($a, null)) : array('wrong', self::recordFailure($a, $iNow));
 		}
@@ -558,7 +643,7 @@ final class TwoFactorRecord
 			$aSpent = self::spendBackupCode($a, $sCode, $sKey);
 			return null === $aSpent
 				? array('wrong', self::recordFailure($a, $iNow))
-				: array('ok', self::recordSuccess($aSpent, null));
+				: array('ok', self::recordSuccess(\array_replace($aSpent, array('LastFactor' => array('f' => 'backup', 't' => $iNow))), null));
 		}
 		$sSecret = self::unseal((string) ($a['SecretBox'] ?? ''), $sKey);
 		$iSlice = (null !== $sSecret && \preg_match('/^\d{6}$/', $sCode)) ? $fSlice($sSecret, $sCode) : null;
@@ -568,6 +653,7 @@ final class TwoFactorRecord
 		if ($iSlice <= (int) ($a['LastSlice'] ?? 0)) {
 			return array('replay', self::recordFailure($a, $iNow));
 		}
+		$a['LastFactor'] = array('f' => 'totp', 't' => $iNow);
 		return array('ok', self::recordSuccess($a, $iSlice));
 	}
 

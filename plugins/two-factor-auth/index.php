@@ -11,7 +11,7 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 {
 	const
 		NAME     = 'Two Factor Authentication',
-		VERSION  = '2.35.0',
+		VERSION  = '2.35.1',
 		RELEASE  = '2026-11-06',
 		REQUIRED = '2.36.0',
 		CATEGORY = 'Login',
@@ -559,7 +559,8 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 				fn (string $sSecret, string $s) => $bTotp ? $oProvider->MatchingSlice($sSecret, $s) : null,
 				// 2.34.0: no context, so no email code, where the domain turned it off.
 				// 2.35.0: the SMS code answers there too, whatever the domain says of the email one.
-				array('b' => $this->loginBinding(), 'p' => 'login', 'c' => $this->emailCodeDomainAllowed($oAccount->Email()) ? 'both' : 'sms'));
+				array('b' => $this->loginBinding(), 'p' => 'login', 'c' => $this->emailCodeDomainAllowed($oAccount->Email()) ? 'both' : 'sms')
+					+ $this->smsContext($oAccount->Email()));
 		};
 		$aRecord = $this->loadRecord($oAccount);
 		if (!$aRecord) {
@@ -567,6 +568,26 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 		}
 		[$sOutcome] = $fJudge($aRecord);
 		if ('ok' !== $sOutcome) {
+			// 2.35.1: a wrong 8-digit code counts against the codes of THIS browser (never against the
+			// account's lockout: anyone may send one) — five tries, then those codes are gone. Written
+			// only when this browser has a live code, so a stranger writes nothing.
+			if ('wrong' === $sOutcome && 8 === \strlen($sCode) && \ctype_digit($sCode)
+				&& TwoFactorRecord::hasLiveCode($aRecord, $this->loginBinding(), \time(), $this->recordKey())) {
+				$this->underLock($oAccount, function () use ($oAccount, $fJudge) {
+					$aNow = $this->loadRecord($oAccount);
+					if (!$aNow || !TwoFactorRecord::hasLiveCode($aNow, $this->loginBinding(), \time(), $this->recordKey())) {
+						return false;
+					}
+					[$sO, $aNew] = $fJudge($aNow);
+					if ('ok' === $sO) {
+						return false;   // a parallel request made it right: the normal path judges it
+					}
+					foreach (array('EmailCodes', 'SmsCodes') as $sList) {
+						isset($aNew[$sList]) && $aNow[$sList] = $aNew[$sList];
+					}
+					return $this->saveRecord($oAccount, $aNow);
+				});
+			}
 			return $sOutcome;
 		}
 		return $this->underLock($oAccount, function () use ($oAccount, $fJudge) {
@@ -579,8 +600,16 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 				// Spent by a parallel login meanwhile: a replay, not counted either.
 				return $sOutcome;
 			}
+			$this->logLoginFactor($oAccount, $aNew);
 			return $this->saveRecord($oAccount, $aNew) ? 'ok' : 'busy';
 		}) ?? 'busy';
+	}
+
+	/** 2.35.1: the way a session was opened, in the log: a session opened by SMS can be told from the others. */
+	protected function logLoginFactor(MainAccount $oAccount, array $aRecord) : void
+	{
+		$sF = (string) ($aRecord['LastFactor']['f'] ?? '');
+		'' !== $sF && $this->Logger()->Write("TFA: login_factor={$sF} for {$oAccount->Email()}");
 	}
 
 	/**
@@ -775,6 +804,7 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 	 */
 	public function DoLogin(MainAccount $oAccount)
 	{
+		$this->rememberBrowser($oAccount);
 		if ('' !== $this->sVerifiedBeforePassword && $this->sVerifiedBeforePassword === $oAccount->Email()) {
 			// Already judged, and spent, before the password (2.30.0): judging
 			// it again here would call it a replay.
@@ -798,13 +828,34 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 		}
 		$sOutcome = '' !== $sAssertion
 			? $this->checkAssertion($oAccount, $sAssertion, 'login', $this->loginBinding())
-			: $this->checkCode($oAccount, $aRecord, $sCode, false, array('b' => $this->loginBinding(), 'p' => 'login', 'c' => 'both'));
+			: $this->checkCode($oAccount, $aRecord, $sCode, false, array('b' => $this->loginBinding(), 'p' => 'login', 'c' => 'both') + $this->smsContext($oAccount->Email()));
 		if ('ok' !== $sOutcome) {
 			// The failure goes to the auth log as well, which fail2ban reads.
 			$this->logAuthFailure($oAccount, $sOutcome);
 			throw new ClientException(\RainLoop\Notifications::AuthError);
 		}
 		$this->Logger()->Write("TFA: Code verified for {$oAccount->Email()}");
+	}
+
+	/**
+	 * 2.35.1: a browser that just completed a full sign-in (password and second factor) is remembered, as a keyed
+	 * hash, to give it a reserve of code requests (see emailSendAllowed). Never allowed to break a login.
+	 */
+	protected function rememberBrowser(MainAccount $oAccount) : void
+	{
+		try {
+			$sBinding = $this->loginBinding();
+			$sKey = $this->recordKey();
+			$aRecord = '' === $sBinding ? null : $this->loadRecord($oAccount);
+			if (!$aRecord || !TwoFactorRecord::isOn($aRecord, $sKey) || TwoFactorRecord::isKnownBrowser($aRecord, $sBinding, $sKey)) {
+				return;
+			}
+			$this->underLock($oAccount, function () use ($oAccount, $sBinding, $sKey) {
+				$aRecord = $this->loadRecord($oAccount);
+				return $aRecord ? $this->saveRecord($oAccount, TwoFactorRecord::addKnownBrowser($aRecord, $sBinding, $sKey)) : false;
+			});
+		} catch (\Throwable $oError) {
+		}
 	}
 
 	public function DoGetTwoFactorInfo() : array
@@ -1719,6 +1770,7 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 		if (\str_contains($sIp, ':') && false !== ($sBin = @\inet_pton($sIp))) {
 			$sIp = \bin2hex(\substr($sBin, 0, 8));
 		}
+		0 === \random_int(0, 49) && $this->purgeDebit($sDir);
 		$sFile = $sDir . '/' . \substr(\hash_hmac('sha256', 'ip|' . $sIp, $this->recordKey()), 0, 32);
 		$rF = @\fopen($sFile, 'c+');
 		if (!$rF || !\flock($rF, LOCK_EX)) {
@@ -1740,6 +1792,20 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 		} finally {
 			\flock($rF, LOCK_UN);
 			\fclose($rF);
+		}
+	}
+
+	/**
+	 * 2.35.1: the per-address counters older than an hour say nothing any more (one file per address, or /64): an
+	 * attacker on IPv6 would otherwise fill the inodes. Done now and then, not at every request.
+	 */
+	protected function purgeDebit(string $sDir) : void
+	{
+		$iOld = \time() - 3700;
+		foreach (\glob($sDir . '/*') ?: array() as $f) {
+			if (\is_file($f) && !\is_link($f) && (int) @\filemtime($f) < $iOld) {
+				@\unlink($f);
+			}
 		}
 	}
 
@@ -1792,14 +1858,31 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 		}
 		$sCode = TwoFactorRecord::newEmailCode();
 		$sKey = $this->recordKey();
-		$sOutcome = $this->underLock($sEmail, function () use ($sEmail, $sBinding, $sPurpose, $sCode, $sKey, $bSms, $sChannel) {
+		$bSuspended = false;
+		$sEmp = $bSms ? $this->smsEmp($sEmail) : '';
+		$bUsable = $bSms && $this->emailUsable($sEmail);
+		$sOutcome = $this->underLock($sEmail, function () use ($sEmail, $sBinding, $sPurpose, $sCode, $sKey, $bSms, $sChannel, $sEmp, $bUsable, &$bSuspended) {
 			$aRecord = $this->loadRecordFor($sEmail);
 			if ($bSms) {
-				// Never on its own: another factor must be there, and for a
-				// login the SMS one must be on. Nothing is written otherwise.
-				if (!$aRecord || !TwoFactorRecord::hasFactor($aRecord, $sKey)
-					|| ('enroll' === $sPurpose ? !empty($aRecord['SmsOn']) : !TwoFactorRecord::smsActive($aRecord, $sKey))) {
+				// Never on its own: another USABLE factor must be there, and for a
+				// login the SMS one must be on and bound to this very number.
+				// Nothing is written otherwise.
+				if (!$aRecord || '' === $sEmp || !TwoFactorRecord::otherUsable($aRecord, $sKey, $bUsable)) {
 					return 'none';
+				}
+				if ('enroll' === $sPurpose) {
+					if (!empty($aRecord['SmsOn'])) {
+						return 'none';
+					}
+				} else if (!TwoFactorRecord::smsActive($aRecord, $sKey, $bUsable)) {
+					return 'none';
+				} else if (!TwoFactorRecord::smsBound($aRecord, $sEmp)) {
+					// The number of the directory is no longer the one enrolled: the factor is suspended,
+					// re-enrolment is required, and the holder is told (below, by the console).
+					unset($aRecord['SmsOn'], $aRecord['SmsNum'], $aRecord['SmsCodes']);
+					$aRecord['SmsSuspended'] = \time();
+					$bSuspended = true;
+					return $this->saveRecord($sEmail, $aRecord) ? 'suspended' : 'busy';
 				}
 			} else {
 				if (!$aRecord) {
@@ -1813,14 +1896,17 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 				}
 			}
 			$iNow = \time();
-			if (!TwoFactorRecord::emailSendAllowed($aRecord, $iNow, $sChannel)) {
+			if (!TwoFactorRecord::emailSendAllowed($aRecord, $iNow, $sChannel, TwoFactorRecord::isKnownBrowser($aRecord, $sBinding, $sKey))) {
 				return 'limit';
 			}
-			return $this->saveRecord($sEmail, TwoFactorRecord::addEmailCode($aRecord, $sCode, $sBinding, $sPurpose, $iNow, $sKey, $sChannel))
+			return $this->saveRecord($sEmail, TwoFactorRecord::addEmailCode($aRecord, $sCode, $sBinding, $sPurpose, $iNow, $sKey, $sChannel, $sEmp))
 				? 'ok' : 'busy';
 		}) ?? 'busy';
+		if ($bSuspended) {
+			$this->queueSuspension($sEmail);
+		}
 		if ('ok' !== $sOutcome) {
-			return $sOutcome;
+			return 'suspended' === $sOutcome ? 'none' : $sOutcome;
 		}
 		return $this->queueEmailCode($sEmail, $sCode, $sChannel) ? 'sent' : 'queue';
 	}
@@ -1844,17 +1930,64 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 	 */
 	protected function smsMasked(string $sEmail) : string
 	{
+		return $this->smsPublished($sEmail)[0];
+	}
+
+	/** The keyed fingerprint of the whole number, as the console published it ('' when it did not: then no SMS, failing closed). */
+	protected function smsEmp(string $sEmail) : string
+	{
+		return $this->smsPublished($sEmail)[1];
+	}
+
+	/** @return array{0: string, 1: string} the masked number and the fingerprint, both '' unless both are well formed */
+	protected function smsPublished(string $sEmail) : array
+	{
 		$sDir = $this->emailCodeDir();
 		if ('' === $sDir || '' === $sEmail || !$this->smsOffered()) {
-			return '';
+			return array('', '');
 		}
 		$a = \json_decode((string) @\file_get_contents($sDir . '/etat/' . \hash('sha256', \strtolower(\trim($sEmail))) . '.json'), true);
 		$m = \is_array($a) ? ($a['mobile'] ?? null) : null;
 		if (!\is_array($m) || true !== ($m['present'] ?? null) || !\is_string($m['masque'] ?? null)
-			|| !\preg_match('/^\+?[0-9 •*]{4,32}$/Du', $m['masque'])) {
-			return '';
+			|| !\preg_match('/^\+?[0-9 •*]{4,32}$/Du', $m['masque'])
+			|| !\is_string($m['empreinte'] ?? null) || !\preg_match('/^[0-9a-f]{64}$/D', $m['empreinte'])) {
+			return array('', '');
 		}
-		return $m['masque'];
+		return array($m['masque'], $m['empreinte']);
+	}
+
+	/** Whether the email factor could be used by this account right now: a verified recovery address, on a domain that allows it. */
+	protected function emailUsable(string $sEmail) : bool
+	{
+		return '' !== $this->recoveryAddress($sEmail);
+	}
+
+	/** The part of a code judgement that is about the SMS channel: the number fingerprint and the usability of the email factor. */
+	protected function smsContext(string $sEmail) : array
+	{
+		return array('m' => $this->smsEmp($sEmail), 'u' => $this->emailUsable($sEmail));
+	}
+
+	/** The console warns the holder that the SMS factor was suspended: the number in the directory is not the one enrolled. No code, no number. */
+	protected function queueSuspension(string $sEmail) : void
+	{
+		$sDir = $this->emailCodeDir() . '/codes';
+		if (!\is_dir($sDir) && !@\mkdir($sDir, 0750)) {
+			return;
+		}
+		$sLang = 'fr';
+		try {
+			$sLang = \strtolower(\substr((string) $this->Manager()->Actions()->GetLanguage(), 0, 2));
+		} catch (\Throwable $oError) {
+		}
+		$sFile = $sDir . '/' . \bin2hex(\random_bytes(12)) . '.json';
+		$iMask = \umask(0077);
+		try {
+			@\file_put_contents($sFile . '.tmp', (string) \json_encode(array('adresse' => \strtolower(\trim($sEmail)), 'canal' => 'sms-suspendu',
+				'langue' => \in_array($sLang, array('fr', 'en', 'ar'), true) ? $sLang : 'fr', 'date' => \time()))) && @\rename($sFile . '.tmp', $sFile);
+		} finally {
+			\umask($iMask);
+		}
 	}
 
 	/**
@@ -1912,7 +2045,7 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 		$sBinding = $this->sessionBinding();
 		$sKey = $this->recordKey();
 		$aRecord = $this->loadRecord($oAccount);
-		if (!$aRecord || '' === $sBinding || !empty($aRecord['SmsOn']) || !TwoFactorRecord::hasFactor($aRecord, $sKey)
+		if (!$aRecord || '' === $sBinding || !empty($aRecord['SmsOn']) || !TwoFactorRecord::otherUsable($aRecord, $sKey, $this->emailUsable($oAccount->Email()))
 			|| '' === $this->smsMasked($oAccount->Email())) {
 			return $this->jsonResponse(__FUNCTION__, false);
 		}
@@ -1923,19 +2056,22 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 		$sCode = \is_string($mCode) ? \trim($mCode) : '';
 		$sOutcome = $this->underLock($oAccount, function () use ($oAccount, $sCode, $sBinding, $sKey) {
 			$aRecord = $this->loadRecord($oAccount);
-			if (!$aRecord || !TwoFactorRecord::hasFactor($aRecord, $sKey)) {
+			if (!$aRecord || !TwoFactorRecord::otherUsable($aRecord, $sKey, $this->emailUsable($oAccount->Email()))) {
 				return 'none';
 			}
 			if (TwoFactorRecord::EMAIL_DIGITS !== \strlen($sCode)) {
 				return 'wrong';
 			}
 			[$sJudged, $aNext] = TwoFactorRecord::check($aRecord, $sCode, $sKey, \time(), fn () => null,
-				array('b' => $sBinding, 'p' => 'enroll', 'c' => 'sms'));
+				array('b' => $sBinding, 'p' => 'enroll', 'c' => 'sms') + $this->smsContext($oAccount->Email()));
 			if ('ok' !== $sJudged) {
 				$this->saveRecord($oAccount, $aNext);
 				return $sJudged;
 			}
+			// Bound to the number that answered: a later change of the number suspends the factor.
 			$aNext['SmsOn'] = true;
+			$aNext['SmsNum'] = $this->smsEmp($oAccount->Email());
+			unset($aNext['SmsSuspended']);
 			return $this->saveRecord($oAccount, $aNext) ? 'ok' : 'busy';
 		}) ?? 'busy';
 		$this->Logger()->Write("TFA: SMS code enrolment {$sOutcome} for {$oAccount->Email()}");
@@ -2311,7 +2447,10 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 			// 2.35.0: the SMS fallback. The number only masked, and only here, in the session.
 			'SmsOffered' => '' !== ($sSms = $this->smsMasked($oAccount->Email())),
 			'SmsMasked' => $sSms,
-			'SmsOn' => $aRecord && TwoFactorRecord::smsActive($aRecord, $this->recordKey()),
+			'SmsOn' => $aRecord && TwoFactorRecord::smsActive($aRecord, $this->recordKey(), $this->emailUsable($oAccount->Email()))
+				&& TwoFactorRecord::smsBound($aRecord, $this->smsEmp($oAccount->Email())),
+			// 2.35.1: the number of the directory changed since the enrolment: suspended, to enrol again.
+			'SmsSuspended' => $aRecord ? !empty($aRecord['SmsSuspended']) : false,
 			'BackupLeft' => $aRecord ? \count((array) ($aRecord['BackupHashes'] ?? array())) : 0,
 			'WebAuthn' => null !== $aConf,
 			'MaxPasskeys' => $aConf ? $aConf['max'] : 0,
