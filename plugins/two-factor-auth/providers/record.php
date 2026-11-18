@@ -122,8 +122,27 @@ final class TwoFactorRecord
 				\array_values(\array_filter(\explode(' ', \trim((string) \preg_replace('/[^\d]+/', ' ', (string) ($a['BackupCodes'] ?? '')))), 'strlen')));
 			unset($a['Secret'], $a['BackupCodes'], $a['QRCode']);
 		}
+		$a = self::dropSmsAlone($a, $sKey);
 		return $a + array('Enable' => false, 'Tested' => false, 'BackupHashes' => array(),
 			'LastSlice' => 0, 'Failures' => array(), 'LockedUntil' => 0, 'Challenges' => array());
+	}
+
+	/**
+	 * 2.35.0: the code by SMS is never a factor on its own. When the last other
+	 * factor is gone it goes with it, so that adding one later does not bring
+	 * back a way in nobody proved again. An unreadable key box is not "no key":
+	 * nothing is dropped on a doubt. Applied when a record is read AND when it
+	 * is written.
+	 */
+	public static function dropSmsAlone(array $a, string $sKey) : array
+	{
+		if (!empty($a['SmsOn']) || !empty($a['SmsCodes'])) {
+			$aKeys = self::passkeys($a, $sKey);
+			if (null !== $aKeys && !$aKeys && empty($a['Enable']) && empty($a['EmailOn'])) {
+				unset($a['SmsOn'], $a['SmsCodes']);
+			}
+		}
+		return $a;
 	}
 
 	/** A record with no TOTP secret: the account registers a security key first (2.28.0). */
@@ -363,10 +382,31 @@ final class TwoFactorRecord
 		return \str_pad((string) \random_int(0, 10 ** self::EMAIL_DIGITS - 1), self::EMAIL_DIGITS, '0', STR_PAD_LEFT);
 	}
 
-	/** Whether one more code may be sent for this account now. */
-	public static function emailSendAllowed(array $a, int $iNow) : bool
+	/**
+	 * 2.35.0: the two channels of a code. Same store, same limits, same
+	 * judgement — but separate lists and a separate hash prefix, so that a code
+	 * sent by SMS is never taken for one sent by email, nor the reverse.
+	 * @return array{0: string, 1: string, 2: string} codes key, sends key, hash prefix
+	 */
+	private static function channel(string $sChannel) : array
 	{
-		$aSends = \array_filter((array) ($a['EmailSends'] ?? array()), fn ($t) => \is_int($t) && $t > $iNow - 86400 && $t <= $iNow);
+		return 'sms' === $sChannel ? array('SmsCodes', 'SmsSends', 'sms|') : array('EmailCodes', 'EmailSends', 'email|');
+	}
+
+	/**
+	 * Whether the SMS code is a way in for this record: switched on AND another
+	 * factor is still there. Never the only one.
+	 */
+	public static function smsActive(array $a, string $sKey) : bool
+	{
+		return !empty($a['SmsOn']) && self::hasFactor($a, $sKey);
+	}
+
+	/** Whether one more code may be sent for this account now. */
+	public static function emailSendAllowed(array $a, int $iNow, string $sChannel = 'email') : bool
+	{
+		[, $sSends] = self::channel($sChannel);
+		$aSends = \array_filter((array) ($a[$sSends] ?? array()), fn ($t) => \is_int($t) && $t > $iNow - 86400 && $t <= $iNow);
 		$iRecent = \count(\array_filter($aSends, fn ($t) => $t > $iNow - self::EMAIL_SENDS_WINDOW));
 		return \count($aSends) < self::EMAIL_SENDS_DAY && $iRecent < self::EMAIL_SENDS;
 	}
@@ -376,16 +416,17 @@ final class TwoFactorRecord
 	 * purpose it is for, its expiry. At most EMAIL_LIVE are kept, the oldest
 	 * goes first; expired ones are dropped. The send is counted.
 	 */
-	public static function addEmailCode(array $a, string $sCode, string $sBinding, string $sPurpose, int $iNow, string $sKey) : array
+	public static function addEmailCode(array $a, string $sCode, string $sBinding, string $sPurpose, int $iNow, string $sKey, string $sChannel = 'email') : array
 	{
-		$aList = \array_values(\array_filter((array) ($a['EmailCodes'] ?? array()),
+		[$sCodes, $sSends, $sPrefix] = self::channel($sChannel);
+		$aList = \array_values(\array_filter((array) ($a[$sCodes] ?? array()),
 			fn ($c) => \is_array($c) && (int) ($c['e'] ?? 0) > $iNow));
-		$aList[] = array('h' => self::hashCode('email|' . $sCode, $sKey), 'b' => self::hashCode($sBinding, $sKey),
+		$aList[] = array('h' => self::hashCode($sPrefix . $sCode, $sKey), 'b' => self::hashCode($sBinding, $sKey),
 			'p' => $sPurpose, 'e' => $iNow + self::EMAIL_TTL, 'n' => 0);
-		$a['EmailCodes'] = \array_slice($aList, -self::EMAIL_LIVE);
-		$aSends = \array_values(\array_filter((array) ($a['EmailSends'] ?? array()), fn ($t) => \is_int($t) && $t > $iNow - 86400));
+		$a[$sCodes] = \array_slice($aList, -self::EMAIL_LIVE);
+		$aSends = \array_values(\array_filter((array) ($a[$sSends] ?? array()), fn ($t) => \is_int($t) && $t > $iNow - 86400));
 		$aSends[] = $iNow;
-		$a['EmailSends'] = $aSends;
+		$a[$sSends] = $aSends;
 		return $a;
 	}
 
@@ -395,13 +436,14 @@ final class TwoFactorRecord
 	 * the codes of that browser and purpose, which go after EMAIL_TRIES.
 	 * Compared in constant time.
 	 */
-	public static function takeEmailCode(array $a, string $sCode, string $sBinding, string $sPurpose, int $iNow, string $sKey) : array
+	public static function takeEmailCode(array $a, string $sCode, string $sBinding, string $sPurpose, int $iNow, string $sKey, string $sChannel = 'email') : array
 	{
-		$sHash = self::hashCode('email|' . $sCode, $sKey);
+		[$sCodes, , $sPrefix] = self::channel($sChannel);
+		$sHash = self::hashCode($sPrefix . $sCode, $sKey);
 		$sB = self::hashCode($sBinding, $sKey);
 		$bRight = false;
 		$aList = array();
-		foreach ((array) ($a['EmailCodes'] ?? array()) as $c) {
+		foreach ((array) ($a[$sCodes] ?? array()) as $c) {
 			if (!\is_array($c) || (int) ($c['e'] ?? 0) <= $iNow) {
 				continue;
 			}
@@ -425,7 +467,7 @@ final class TwoFactorRecord
 			}
 			$aList = $aKept;
 		}
-		$a['EmailCodes'] = $aList;
+		$a[$sCodes] = $aList;
 		return array($bRight, $a);
 	}
 
@@ -492,10 +534,24 @@ final class TwoFactorRecord
 			// 2.33.0: a code sent to the recovery address, for this browser and
 			// this purpose only ($aEmail: ['b' => binding, 'p' => purpose]).
 			// Without the factor on, only an enrolment may use one.
-			if (null === $aEmail || (empty($a['EmailOn']) && 'enroll' !== ($aEmail['p'] ?? ''))) {
+			// 2.35.0: 'c' says which channel may answer: 'email' (the default,
+			// as before), 'sms', or 'both' (the login screen, where the person
+			// types the code without saying where it came from). The SMS one
+			// counts only while it is on next to another factor, or for its own
+			// enrolment.
+			$sC = (string) ($aEmail['c'] ?? 'email');
+			$sP = (string) ($aEmail['p'] ?? '');
+			$bEmail = null !== $aEmail && \in_array($sC, array('email', 'both'), true) && (!empty($a['EmailOn']) || 'enroll' === $sP);
+			$bSms = null !== $aEmail && \in_array($sC, array('sms', 'both'), true) && (self::smsActive($a, $sKey) || 'enroll' === $sP);
+			if (!$bEmail && !$bSms) {
 				return array('wrong', self::recordFailure($a, $iNow));
 			}
-			[$bOk, $a] = self::takeEmailCode($a, $sCode, (string) ($aEmail['b'] ?? ''), (string) ($aEmail['p'] ?? ''), $iNow, $sKey);
+			$bOk = false;
+			foreach (array('email' => $bEmail, 'sms' => $bSms) as $sChan => $bTry) {
+				if ($bTry && !$bOk) {
+					[$bOk, $a] = self::takeEmailCode($a, $sCode, (string) ($aEmail['b'] ?? ''), $sP, $iNow, $sKey, $sChan);
+				}
+			}
 			return $bOk ? array('ok', self::recordSuccess($a, null)) : array('wrong', self::recordFailure($a, $iNow));
 		}
 		if (\strlen($sCode) === self::BACKUP_DIGITS && \ctype_digit($sCode)) {

@@ -325,3 +325,63 @@ test('2.34.2: « mot de passe oublié » sous le mot de passe, « créer un comp
 	micro.splice(0).forEach(f => f());
 	assert.deepStrictEqual(formulaire.map(n => n.nom), ['motdepasse', 'oubli', 'groupe', 'bouton', 'compte']);
 });
+
+/* ---- 2.35.0: the code by SMS, a fallback ---- */
+function avecSms(sms, courriel = true, adresse = 'imen') {
+	const ecoute = {}, appels = [], ajoutes = [], boutons = {};
+	const conteneur = { prepend: () => {}, append: e => ajoutes.push(e) };
+	const champ = { value: adresse, focus: () => {} };
+	const vue = {
+		viewModelTemplateID: 'Login',
+		viewModelDom: { querySelector: s => ('#plugin-Login-BottomControlGroup' === s ? conteneur : 'input[name=Email]' === s ? champ : null) },
+		erreur: '', complement: 'x',
+		submitError(v) { this.erreur = v; }, submitErrorAdditional(v) { this.complement = v; }
+	};
+	const bac = {
+		addEventListener: (n, f) => { ecoute[n] = f; },
+		setTimeout: () => {}, queueMicrotask: f => f(),
+		Element: { fromHTML: h => ({ h, querySelector: s => {
+			if ('button' !== s) { return null; }
+			const nom = h.includes('twofactor-sms') ? 'sms' : h.includes('twofactor-email') ? 'courriel' : null;
+			return nom ? (boutons[nom] = boutons[nom] || { disabled: false, ecoute: null, addEventListener(n, f) { this.ecoute = f; } }) : null;
+		}, after: e => ajoutes.push(e) }) },
+		document: { location: {} }, Event: class {}, window: {}
+	};
+	bac.window.rl = {
+		settings: { get: k => ('TwoFactorSmsLogin' === k ? sms : 'TwoFactorEmailLogin' === k ? courriel : false) },
+		i18n: k => '«' + k + '»',
+		pluginRemoteRequest: (cb, action, params) => appels.push({ cb, action, params })
+	};
+	vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../js/TwoFactorAuthLogin.js'), 'utf8'), bac);
+	ecoute['rl-view-model']({ detail: vue });
+	return { vue, boutons, appels, ajoutes };
+}
+
+test('2.35.0: le bouton SMS est là pour tout visiteur quand le webmail l’offre, présenté comme un secours, absent sinon', () => {
+	const a = avecSms(true);
+	assert.ok(a.ajoutes.some(e => e.h.includes('twofactor-sms') && e.h.includes('PLUGIN_2FA/BUTTON_SMS_CODE')));
+	assert.ok(!avecSms(false).ajoutes.some(e => e.h.includes('twofactor-sms')));
+	assert.ok(avecSms(true, false).ajoutes.some(e => e.h.includes('twofactor-sms')), 'indépendant du bouton du courriel');
+});
+
+test('2.35.0: la demande SMS porte l’adresse tapée ; la réponse est la même phrase quoi que dise le serveur', () => {
+	const textes = new Set();
+	for (const reponse of [[0, { Result: true }], [0, { Result: false }], [102, null], [999, { Result: true }]]) {
+		const c = avecSms(true);
+		c.boutons.sms.ecoute();
+		assert.strictEqual(JSON.stringify([c.appels[0].action, c.appels[0].params]), JSON.stringify(['SmsCodeLoginRequest', { Email: 'imen' }]));
+		c.appels[0].cb(...reponse);
+		textes.add(c.vue.erreur + '|' + c.vue.complement);
+	}
+	assert.deepStrictEqual([...textes], ['«PLUGIN_2FA/INFO_SMS_CODE_SENT»|']);
+});
+
+test('2.35.0: sans adresse tapée, aucun SMS n’est demandé ; le bouton du courriel garde sa demande', () => {
+	const v = avecSms(true, true, '  ');
+	v.boutons.sms.ecoute();
+	assert.deepStrictEqual([v.appels.length, v.vue.erreur], [0, '«PLUGIN_2FA/ERROR_SMS_FOR_CODE»']);
+	const c = avecSms(true);
+	c.boutons.courriel.ecoute();
+	assert.strictEqual(c.appels[0].action, 'EmailCodeLoginRequest');
+	assert.strictEqual(c.boutons.sms.disabled, false);
+});

@@ -1,6 +1,57 @@
 # two-factor-auth — TODO
 
 
+## 18 novembre 2026 — 2.35.0 : le code par SMS, en secours, et les avis croisés
+
+* **Décision du propriétaire** (phase de tests) : un second facteur de remplacement par SMS quand les autres ne sont
+  pas possibles, **en informant le titulaire par un autre canal** ; et un SMS d'avis quand un code est demandé par
+  courriel. « Nous verrons en production si on garde ces comportements par défaut » : les deux avis sont réglables
+  côté console (`signup.avis_croises`, vrai par défaut), le SMS côté greffon (`sms_code`, vrai par défaut).
+* **Conception** : facteur `SmsOn`, **jamais seul** ; numéro **de l'annuaire**, publié masqué par la console
+  (`etat/<sha256>.json`, clé `mobile`), jamais saisi ; demande déposée dans `codes/` avec `canal: "sms"`, la console
+  relit le mobile dans l'annuaire, envoie par le motif `connexion`, puis avise par courriel. Listes et empreintes
+  **séparées** de celles du courriel (`SmsCodes`/`SmsSends`, préfixe `sms|`) : un code SMS n'est jamais pris pour un
+  code courriel, ni l'inverse. À la connexion, un code de 8 chiffres est essayé sur les deux listes (contexte `c`).
+* **Analyse adversariale, faite avant de coder.** Vecteur → parade (et ce qui reste) :
+  1. *Échange de SIM / numéro recyclé* : qui détient le numéro reçoit les codes. Parades : le SMS est un secours **jamais
+     seul** (il faut le mot de passe, et le code n'est jugé qu'avant lui, donc il n'ouvre rien sans lui), le numéro vient
+     de l'annuaire vérifié à l'inscription, **avis par un autre canal** à chaque demande. Reste : un attaquant qui a
+     le mot de passe **et** la SIM entre ; l'avis le dit au titulaire mais après coup. Risque assumé pour les tests.
+  2. *Interception en transit / code lisible dans la messagerie du téléphone relais* : le code passe par les relais
+     SMS de Convergent et reste lisible dans leur boîte d'envoi. Parades : valable 10 min, usage unique, lié au
+     navigateur, jamais journalisé (ni greffon, ni audit). Reste : lisible par qui a accès au téléphone relais ;
+     à purger côté playSMS (à vérifier au déploiement).
+  3. *Panne du relais* : la demande est consommée (compteurs), aucun avis n'est envoyé (il ne dirait que du bruit) ;
+     l'écran répond pareil. L'utilisateur garde ses autres moyens — raison de plus d'être un secours.
+  4. *Inondation et coût* (une victime inondée, un budget vidé) : plafonds du greffon (3/15 min et 10/jour par compte,
+     10/h par adresse IP, partagés avec le courriel), second plafond côté console (6 codes SMS/15 min par compte),
+     **un avis par compte et par canal toutes les 15 min**, budget horaire de tous les SMS (`Budget`).
+  5. *Énumération* (savoir qui a le facteur, qui a un mobile) : réponse identique pour tout compte, même délai,
+     rien d'écrit pour un compte sans le facteur, le numéro n'est **jamais** montré avant le mot de passe, la
+     session ne voit que le masque (3 derniers chiffres), validé de nouveau (`^\+?[0-9 •*]{4,32}$`).
+  6. *Rejeu* : usage unique, lié au navigateur (jeton de connexion), à l'usage (`login`/`enroll`), 10 min, 5 essais.
+  7. *Désactivation d'un facteur fort par une session volée* : activer le SMS exige un facteur courant **et** le code
+     reçu ; le désactiver exige un facteur courant ; **un code SMS ne prouve rien dans la session** (ni `reauth`, ni
+     désactivation d'un autre facteur) — sinon un voleur de session plus un SIM défairait un TOTP.
+  8. *Le SMS comme facteur unique* : `SmsOn` sans autre facteur n'est ni actif (`smsActive`), ni conservé
+     (`dropSmsAlone` à la lecture **et** à l'écriture, sauf boîte de clés illisible : pas de suppression sur un doute),
+     ni ressuscité quand un facteur est rajouté plus tard.
+  9. *Numéro saisi par l'utilisateur* : refusé par construction ; une session volée ne peut pas diriger les codes.
+  10. *Demande forgée dans `codes/`* : la console ne prend le mobile que dans l'annuaire, refuse un canal inconnu,
+     ne traite que le domaine servi, et le plafonne.
+  11. *Avis détourné* : l'avis part à l'adresse de secours vérifiée (hors domaine du compte) sinon au compte ; il ne
+     contient ni code ni numéro entier ; un attaquant qui change l'adresse de secours est déjà arrêté par le garde
+     de 2.33.0 (facteur courant exigé).
+  12. *Contournement de la politique de domaine* : la politique `code_secours` du domaine ne retire que le canal
+     courriel ; elle n'a pas été étendue au SMS (écart à signaler, voir le rapport).
+* **Essais** : PHP Actions 401 (357), Record 114 (93), WebAuthn 92 ; JS 67 (59) — suites entières vertes, comme avant.
+  Mutations : 33 sur 33 tuées (quatre étaient vivantes à la première passe : un compte à secret non testé, `DoLogin`
+  seul après le mot de passe, la politique de domaine qui ne retire que le courriel, l'écriture qui retire le SMS
+  seul — un essai ajouté pour chacune).
+* **Déploiement** : `email_code_dir` est déjà posé sur smail ; il faut que la console publie `mobile` (commande
+  `sms:mobiles`, à planifier), un compte playSMS `connexion` facultatif, et le réglage `signup.avis_croises`.
+  **Rien n'est déployé.**
+
 ## 2.34.1 — 6 novembre 2026 : ordre de l'écran de connexion
 
 * Demande du propriétaire : la clé et le code par courriel en haut avec le champ du code, « Mot de passe oublié » et

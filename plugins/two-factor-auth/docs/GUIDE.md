@@ -130,6 +130,30 @@ application à codes ou une clé de sécurité.
 **Résultat :** vous êtes connecté. Le code vaut 10 minutes, une seule fois, dans le navigateur qui l'a demandé.
 Au plus trois codes par quart d'heure : au-delà, attendez ou utilisez un code de secours.
 
+## Recevoir un code par SMS quand rien d'autre n'est possible
+
+**À quoi ça sert :** vous connecter quand vous n'avez ni votre application, ni votre clé, ni vos codes de secours.
+Ce n'est **jamais** un premier moyen de validation : il s'ajoute à un autre déjà actif. Il est moins sûr (carte SIM,
+messages lisibles sur le téléphone), c'est pourquoi un avis vous est envoyé par un **autre canal** à chaque demande.
+
+1. Activez d'abord un autre moyen (application à codes, clé de sécurité ou code par l'adresse de secours).
+2. Ouvrez **Réglages**, puis **Authentification en deux étapes**, section **Code par SMS (secours)**. Le mobile
+   affiché, masqué, est celui de votre fiche : il ne se saisit pas ici.
+3. Cliquez sur **Envoyer un code par SMS pour l'activer**, tapez le code de 8 chiffres reçu, puis cliquez sur
+   **Activer** et confirmez avec votre moyen actuel.
+
+**Résultat :** **Activé** s'affiche à côté du mobile masqué.
+
+Pour l'utiliser à la connexion : saisissez votre adresse, cliquez sur **Si vos autres moyens ne sont pas
+disponibles : recevoir un code par SMS**, puis tapez le code de 8 chiffres dans **Code de vérification ou code de
+secours**, avec votre mot de passe. Le code vaut 10 minutes, une seule fois, dans le navigateur qui l'a demandé.
+Au plus trois codes par quart d'heure.
+
+**Bon à savoir :** chaque fois que quelqu'un demande un code par SMS pour votre compte, vous en êtes averti par
+courriel (sur votre adresse de secours si vous en avez une). Et chaque fois qu'un code est demandé par courriel,
+vous en êtes averti par SMS. Si ce n'est pas vous, changez votre mot de passe. Si la section n'apparaît pas, votre
+fiche n'a pas de mobile.
+
 ## Régénérer ses codes de secours
 
 **À quoi ça sert :** obtenir une nouvelle liste quand vous avez utilisé presque tous vos codes, ou perdu la

@@ -24,10 +24,13 @@
 		// 2.33.0: the code by the recovery address, offered to every visitor
 		// wherever this webmail has it — the button says nothing of anyone.
 		emailLogin = () => !!rl.settings.get('TwoFactorEmailLogin'),
-		askEmailCode = button => {
+		// 2.35.0: the same, for the SMS fallback — offered to every visitor
+		// as well, and answered with one sentence whatever happened.
+		smsLogin = () => !!rl.settings.get('TwoFactorSmsLogin'),
+		askEmailCode = (button, action = 'EmailCodeLoginRequest', info = 'PLUGIN_2FA/INFO_EMAIL_CODE_SENT', missing = 'PLUGIN_2FA/ERROR_EMAIL_FOR_CODE') => {
 			const email = String(dom('input[name=Email]')?.value || '').trim();
 			if (!email) {
-				loginView.submitError(rl.i18n('PLUGIN_2FA/ERROR_EMAIL_FOR_CODE'));
+				loginView.submitError(rl.i18n(missing));
 				dom('input[name=Email]')?.focus();
 				return;
 			}
@@ -37,10 +40,10 @@
 			rl.pluginRemoteRequest(() => {
 				// The same words whatever happened: the server answers the
 				// same for every address, and so does this screen.
-				loginView.submitError(rl.i18n('PLUGIN_2FA/INFO_EMAIL_CODE_SENT'));
+				loginView.submitError(rl.i18n(info));
 				loginView.submitErrorAdditional('');
 				dom('input[name=totp_code]')?.focus();
-			}, 'EmailCodeLoginRequest', { Email: email });
+			}, action, { Email: email });
 		},
 		sign = options => {
 			webauthn().get(options).then(json => {
@@ -137,6 +140,16 @@
 					const b = mail.querySelector('button');
 					b?.addEventListener('click', () => askEmailCode(b));
 					placer(mail);
+				}
+				// 2.35.0: a fallback, said as one ("if your other ways are not
+				// available"): last of the buttons, and a link-looking one.
+				if (smsLogin()) {
+					const sms = Element.fromHTML('<div class="controls twofactor-sms">'
+						+ '<button type="button" class="btn btn-link" data-i18n="PLUGIN_2FA/BUTTON_SMS_CODE">'
+						+ rl.i18n('PLUGIN_2FA/BUTTON_SMS_CODE') + '</button></div>');
+					const b = sms.querySelector('button');
+					b?.addEventListener('click', () => askEmailCode(b, 'SmsCodeLoginRequest', 'PLUGIN_2FA/INFO_SMS_CODE_SENT', 'PLUGIN_2FA/ERROR_SMS_FOR_CODE'));
+					placer(sms);
 				}
 			}
 			// 2.34.2: the links of login-register (upstream, left untouched): "Forgot

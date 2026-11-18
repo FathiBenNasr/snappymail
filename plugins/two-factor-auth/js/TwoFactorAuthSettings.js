@@ -115,6 +115,16 @@ class TwoFactorAuthSettings
 		this.emailBusy = ko.observable(false);
 		this.emailError = ko.observable('');
 
+		// 2.35.0: the code by SMS, a fallback next to another factor. The
+		// number is the directory's and only ever shown masked.
+		this.smsOffered = ko.observable(false);
+		this.smsMasked = ko.observable('');
+		this.smsOn = ko.observable(false);
+		this.smsSent = ko.observable(false);
+		this.smsCode = ko.observable('');
+		this.smsBusy = ko.observable(false);
+		this.smsError = ko.observable('');
+
 		const fn = iError => iError && this.viewEnable_(false);
 		Object.entries({
 			viewEnable: {
@@ -167,7 +177,7 @@ class TwoFactorAuthSettings
 		this.onShowSecretResult = this.onShowSecretResult.bind(this);
 		['addPasskey', 'renamePasskey', 'savePasskey', 'removePasskey',
 			'savedCodes', 'confirmCodes', 'cancelPending', 'regenerateCodes', 'addAuthenticator',
-			'emailSend', 'emailEnable', 'emailDisable'].forEach(m => this[m] = this[m].bind(this));
+			'emailSend', 'emailEnable', 'emailDisable', 'smsSend', 'smsEnable', 'smsDisable'].forEach(m => this[m] = this[m].bind(this));
 	}
 
 	/**
@@ -257,6 +267,10 @@ class TwoFactorAuthSettings
 		this.emailMasked(pString(info.EmailMasked));
 		this.emailOn(!!info.EmailOn);
 		info.EmailOn && (this.emailSent(false), this.emailCode(''));
+		this.smsOffered(!!info.SmsOffered);
+		this.smsMasked(pString(info.SmsMasked));
+		this.smsOn(!!info.SmsOn);
+		info.SmsOn && (this.smsSent(false), this.smsCode(''));
 		this.webauthn(!!info.WebAuthn);
 		this.maxPasskeys(info.MaxPasskeys | 0);
 		this.canAddPasskey(!!info.WebAuthn && info.Passkeys.length < (info.MaxPasskeys | 0));
@@ -411,6 +425,60 @@ class TwoFactorAuthSettings
 			ok && this.applyInfo(oData.Result);
 			done(ok ? 0 : (iError || 1), { Result: ok });
 		}, 'EmailCodeDisable', proofOf(proof)));
+	}
+
+	/* ---- the code by SMS, as a fallback (2.35.0) ---- */
+
+	/** A code to the directory's mobile number, to switch it on. Only next to another factor. */
+	smsSend() {
+		if (!authentifie() || this.smsBusy() || !this.secondFactorOn()) {
+			return;
+		}
+		this.smsBusy(true);
+		this.smsError('');
+		rl.pluginRemoteRequest((iError, oData) => {
+			this.smsBusy(false);
+			const sent = !iError && !!oData?.Result?.Sent;
+			this.smsSent(sent);
+			sent || this.smsError(rl.i18n('limit' === oData?.Result?.Reason
+				? 'PLUGIN_2FA/ERROR_EMAIL_LIMIT' : 'PLUGIN_2FA/ERROR_SMS_NOT_SENT'));
+		}, 'SmsCodeRequest', {});
+	}
+
+	/** The code received, typed back, with a current factor: always asked. */
+	smsEnable() {
+		const code = String(this.smsCode()).trim();
+		if (!authentifie() || this.smsBusy() || !code || !this.secondFactorOn()) {
+			return;
+		}
+		this.prove((proof, done) => {
+			this.smsBusy(true);
+			this.smsError('');
+			rl.pluginRemoteRequest((iError, oData) => {
+				this.smsBusy(false);
+				const ok = !iError && !!oData?.Result;
+				if (ok) {
+					this.smsCode('');
+					this.smsSent(false);
+					this.applyInfo(oData.Result);
+				} else {
+					this.smsError(rl.i18n('PLUGIN_2FA/ERROR_SMS_CODE_WRONG'));
+				}
+				done && done(ok ? 0 : (iError || 1), { Result: ok });
+			}, 'SmsCodeEnable', Object.assign({ SmsCode: code }, proofOf(proof)));
+		});
+	}
+
+	/** Off: a current factor is asked. */
+	smsDisable() {
+		if (!authentifie()) {
+			return;
+		}
+		this.prove((proof, done) => rl.pluginRemoteRequest((iError, oData) => {
+			const ok = !iError && !!oData?.Result;
+			ok && this.applyInfo(oData.Result);
+			done(ok ? 0 : (iError || 1), { Result: ok });
+		}, 'SmsCodeDisable', proofOf(proof)));
 	}
 
 	/** From the warning: the same path as the authenticator button of this screen. */

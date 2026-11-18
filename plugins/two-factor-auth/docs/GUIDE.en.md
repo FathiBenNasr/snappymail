@@ -124,6 +124,28 @@ app or a security key.
 **Result:** you are signed in. The code is valid for 10 minutes, once, in the browser that asked for it. At most
 three codes per quarter of an hour: beyond that, wait or use a backup code.
 
+## Receive a code by SMS when nothing else is possible
+
+**What it is for:** signing in when you have neither your app, nor your key, nor your backup codes. It is **never**
+a first way of verifying: it is added to another one that is already on. It is less safe (SIM card, messages readable
+on the phone), which is why a notice is sent to you through **another channel** at every request.
+
+1. Switch on another way first (authenticator app, security key, or code by the recovery address).
+2. Open **Settings**, then **2-Step Verification**, section **Code by SMS (fallback)**. The mobile shown, masked,
+   is the one of your profile: it is not typed here.
+3. Click **Send a code by SMS to switch it on**, type the 8-digit code received, then click **Switch on** and
+   confirm with your current way.
+
+**Result:** **On** is shown next to the masked mobile.
+
+To use it at sign-in: type your address, click **If your other ways are not available: receive a code by SMS**, then
+type the 8-digit code in **Verification code or backup code**, with your password. The code is valid for 10 minutes,
+once, in the browser that asked for it. At most three codes per quarter of an hour.
+
+**Good to know:** every time someone asks for a code by SMS for your account, you are warned by email (on your
+recovery address if you have one). And every time a code is asked for by email, you are warned by SMS. If it was not
+you, change your password. If the section does not appear, your profile has no mobile.
+
 ## Regenerate your backup codes
 
 **What it is for:** get a new list when you have used almost all your codes, or lost the list.

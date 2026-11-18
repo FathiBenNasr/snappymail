@@ -11,7 +11,7 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 {
 	const
 		NAME     = 'Two Factor Authentication',
-		VERSION  = '2.34.2',
+		VERSION  = '2.35.0',
 		RELEASE  = '2026-11-06',
 		REQUIRED = '2.36.0',
 		CATEGORY = 'Login',
@@ -104,6 +104,11 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 		$this->addJsonHook('EmailCodeRequest', 'DoEmailCodeRequest');
 		$this->addJsonHook('EmailCodeEnable', 'DoEmailCodeEnable');
 		$this->addJsonHook('EmailCodeDisable', 'DoEmailCodeDisable');
+		// 2.35.0: a code by SMS, as a fallback next to another second factor.
+		$this->addJsonHook('SmsCodeLoginRequest', 'DoSmsCodeLoginRequest');
+		$this->addJsonHook('SmsCodeRequest', 'DoSmsCodeRequest');
+		$this->addJsonHook('SmsCodeEnable', 'DoSmsCodeEnable');
+		$this->addJsonHook('SmsCodeDisable', 'DoSmsCodeDisable');
 
 		$this->addTemplate('templates/TwoFactorAuthSettings.html');
 		$this->addTemplate('templates/PopupsTwoFactorAuthTest.html');
@@ -187,6 +192,12 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 				->SetType(\RainLoop\Enumerations\PluginPropertyType::STRING)
 				->SetDescription('The formules directory the administration console writes (etat/) and reads (codes/). Empty: the code by email is not offered. The console mails the code to the VERIFIED recovery address only, never to one on the account domain.')
 				->SetDefaultValue(''),
+			// 2.35.0
+			\RainLoop\Plugins\Property::NewInstance("sms_code")
+				->SetLabel('Code by SMS, as a fallback (needs the directory above)')
+				->SetType(\RainLoop\Enumerations\PluginPropertyType::BOOL)
+				->SetDescription('On by default: an account that has another second factor may also receive a code on the mobile number of its directory entry, and the console warns the holder by another channel. Switch off to withdraw it from the login screen and the settings.')
+				->SetDefaultValue(true),
 		];
 	}
 
@@ -201,6 +212,8 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 			$aResult['TwoFactorKeyLogin'] = null !== $this->webAuthnConf();
 			// 2.33.0: likewise, the code by email is offered to every visitor.
 			$aResult['TwoFactorEmailLogin'] = '' !== $this->emailCodeDir();
+			// 2.35.0: and the SMS fallback, likewise for every visitor.
+			$aResult['TwoFactorSmsLogin'] = $this->smsOffered();
 			if (!empty($aResult['Auth'])) {
 				$oAccount = $this->getMainAccountFromToken();
 				// Per tenant (2.26.0): a domain in the list is held to the
@@ -545,7 +558,8 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 			return TwoFactorRecord::check($aRecord, $sCode, $this->recordKey(), \time(),
 				fn (string $sSecret, string $s) => $bTotp ? $oProvider->MatchingSlice($sSecret, $s) : null,
 				// 2.34.0: no context, so no email code, where the domain turned it off.
-				$this->emailCodeDomainAllowed($oAccount->Email()) ? array('b' => $this->loginBinding(), 'p' => 'login') : null);
+				// 2.35.0: the SMS code answers there too, whatever the domain says of the email one.
+				array('b' => $this->loginBinding(), 'p' => 'login', 'c' => $this->emailCodeDomainAllowed($oAccount->Email()) ? 'both' : 'sms'));
 		};
 		$aRecord = $this->loadRecord($oAccount);
 		if (!$aRecord) {
@@ -784,7 +798,7 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 		}
 		$sOutcome = '' !== $sAssertion
 			? $this->checkAssertion($oAccount, $sAssertion, 'login', $this->loginBinding())
-			: $this->checkCode($oAccount, $aRecord, $sCode, false, array('b' => $this->loginBinding(), 'p' => 'login'));
+			: $this->checkCode($oAccount, $aRecord, $sCode, false, array('b' => $this->loginBinding(), 'p' => 'login', 'c' => 'both'));
 		if ('ok' !== $sOutcome) {
 			// The failure goes to the auth log as well, which fail2ban reads.
 			$this->logAuthFailure($oAccount, $sOutcome);
@@ -1735,7 +1749,7 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 	 * up itself, mails it and deletes the file. Written aside, then renamed:
 	 * the console never reads half a file.
 	 */
-	protected function queueEmailCode(string $sEmail, string $sCode) : bool
+	protected function queueEmailCode(string $sEmail, string $sCode, string $sChannel = 'email') : bool
 	{
 		$sDir = $this->emailCodeDir() . '/codes';
 		if (!\is_dir($sDir) && !@\mkdir($sDir, 0750)) {
@@ -1749,9 +1763,13 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 		$sFile = $sDir . '/' . \bin2hex(\random_bytes(12)) . '.json';
 		$iMask = \umask(0077);
 		try {
+			// 2.35.0: 'canal' => 'sms' for a code to the directory's mobile number;
+			// a file without it stays a code by email, as the console always read it.
+			// Never the number: the console reads it from the directory itself.
 			return false !== @\file_put_contents($sFile . '.tmp', (string) \json_encode(array(
 					'adresse' => \strtolower(\trim($sEmail)), 'code' => $sCode,
-					'langue' => \in_array($sLang, array('fr', 'en', 'ar'), true) ? $sLang : 'fr', 'date' => \time())))
+					'langue' => \in_array($sLang, array('fr', 'en', 'ar'), true) ? $sLang : 'fr', 'date' => \time())
+					+ ('sms' === $sChannel ? array('canal' => 'sms') : array())))
 				&& @\rename($sFile . '.tmp', $sFile);
 		} finally {
 			\umask($iMask);
@@ -1763,35 +1781,185 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 	 * ('none', 'limit', 'busy', 'queue'). For a login the factor must be on;
 	 * nothing is written for an account without it.
 	 */
-	protected function issueEmailCode(string $sEmail, string $sBinding, string $sPurpose) : string
+	protected function issueEmailCode(string $sEmail, string $sBinding, string $sPurpose, string $sChannel = 'email') : string
 	{
-		if ('' === $sBinding || '' === $this->recoveryAddress($sEmail)) {
+		$bSms = 'sms' === $sChannel;
+		// SMS: the number is the directory's, published by the console; nothing
+		// to send to without it. And never for 'reauth': an SMS is no proof
+		// that weakens the second factor.
+		if ('' === $sBinding || ($bSms ? ('' === $this->smsMasked($sEmail) || 'reauth' === $sPurpose) : '' === $this->recoveryAddress($sEmail))) {
 			return 'none';
 		}
 		$sCode = TwoFactorRecord::newEmailCode();
 		$sKey = $this->recordKey();
-		$sOutcome = $this->underLock($sEmail, function () use ($sEmail, $sBinding, $sPurpose, $sCode, $sKey) {
+		$sOutcome = $this->underLock($sEmail, function () use ($sEmail, $sBinding, $sPurpose, $sCode, $sKey, $bSms, $sChannel) {
 			$aRecord = $this->loadRecordFor($sEmail);
-			if (!$aRecord) {
-				if ('enroll' !== $sPurpose) {
+			if ($bSms) {
+				// Never on its own: another factor must be there, and for a
+				// login the SMS one must be on. Nothing is written otherwise.
+				if (!$aRecord || !TwoFactorRecord::hasFactor($aRecord, $sKey)
+					|| ('enroll' === $sPurpose ? !empty($aRecord['SmsOn']) : !TwoFactorRecord::smsActive($aRecord, $sKey))) {
 					return 'none';
 				}
-				$aRecord = TwoFactorRecord::blank($sEmail);
-			}
-			if ('enroll' === $sPurpose ? !empty($aRecord['EmailOn']) : empty($aRecord['EmailOn'])) {
-				return 'none';
+			} else {
+				if (!$aRecord) {
+					if ('enroll' !== $sPurpose) {
+						return 'none';
+					}
+					$aRecord = TwoFactorRecord::blank($sEmail);
+				}
+				if ('enroll' === $sPurpose ? !empty($aRecord['EmailOn']) : empty($aRecord['EmailOn'])) {
+					return 'none';
+				}
 			}
 			$iNow = \time();
-			if (!TwoFactorRecord::emailSendAllowed($aRecord, $iNow)) {
+			if (!TwoFactorRecord::emailSendAllowed($aRecord, $iNow, $sChannel)) {
 				return 'limit';
 			}
-			return $this->saveRecord($sEmail, TwoFactorRecord::addEmailCode($aRecord, $sCode, $sBinding, $sPurpose, $iNow, $sKey))
+			return $this->saveRecord($sEmail, TwoFactorRecord::addEmailCode($aRecord, $sCode, $sBinding, $sPurpose, $iNow, $sKey, $sChannel))
 				? 'ok' : 'busy';
 		}) ?? 'busy';
 		if ('ok' !== $sOutcome) {
 			return $sOutcome;
 		}
-		return $this->queueEmailCode($sEmail, $sCode) ? 'sent' : 'queue';
+		return $this->queueEmailCode($sEmail, $sCode, $sChannel) ? 'sent' : 'queue';
+	}
+
+	/* ---- 2.35.0: a code by SMS, as a fallback ---- */
+
+	/** Whether this webmail offers the SMS fallback at all (the same directory as the email code, and the switch). */
+	protected function smsOffered() : bool
+	{
+		return '' !== $this->emailCodeDir() && (bool) $this->Config()->Get('plugin', 'sms_code', true);
+	}
+
+	/**
+	 * The mobile number of the account's directory entry, MASKED, as the
+	 * console publishes it in etat/<sha256>.json ("mobile": {"present": true,
+	 * "masque": "+216 •• ••• 945"}), or ''. The plugin never holds the number
+	 * and never takes one from the browser: a number typed in the webmail
+	 * would let a stolen session point the codes at itself. What is read is
+	 * checked again: a masked number only (digits, spaces, bullets, a plus),
+	 * short.
+	 */
+	protected function smsMasked(string $sEmail) : string
+	{
+		$sDir = $this->emailCodeDir();
+		if ('' === $sDir || '' === $sEmail || !$this->smsOffered()) {
+			return '';
+		}
+		$a = \json_decode((string) @\file_get_contents($sDir . '/etat/' . \hash('sha256', \strtolower(\trim($sEmail))) . '.json'), true);
+		$m = \is_array($a) ? ($a['mobile'] ?? null) : null;
+		if (!\is_array($m) || true !== ($m['present'] ?? null) || !\is_string($m['masque'] ?? null)
+			|| !\preg_match('/^\+?[0-9 •*]{4,32}$/Du', $m['masque'])) {
+			return '';
+		}
+		return $m['masque'];
+	}
+
+	/**
+	 * At the login screen, before any password: "send me a code by SMS".
+	 * The same shape as the one by email, on purpose: the same answer for every
+	 * account, after the same wait; nothing written for an account without the
+	 * factor; the number is not shown (it would say who has the factor); caps
+	 * per account and per address (shared with the email request).
+	 */
+	public function DoSmsCodeLoginRequest() : array
+	{
+		$fStart = \microtime(true);
+		$bOffered = $this->smsOffered();
+		$sOutcome = 'off';
+		if ($bOffered) {
+			$sBinding = $this->loginBinding();
+			$sEmail = $this->loginEmail((string) $this->jsonParam('Email', ''));
+			$sOutcome = 'none';
+			if ('' !== $sEmail && '' !== $sBinding) {
+				if (!$this->ipAllows()) {
+					$sOutcome = 'ip-limit';
+				} else {
+					try {
+						$sOutcome = $this->issueEmailCode($sEmail, $sBinding, 'login', 'sms');
+					} catch (\Throwable $oError) {
+						$sOutcome = 'error';
+					}
+				}
+			}
+			$this->Logger()->Write("TFA: SMS code at login: {$sOutcome}" . ('' !== $sEmail ? " for {$sEmail}" : ''));
+		}
+		$fLeft = 1.0 + \random_int(0, 300) / 1000 - (\microtime(true) - $fStart);
+		0 < $fLeft && \usleep((int) ($fLeft * 1000000));
+		return $this->jsonResponse(__FUNCTION__, $bOffered);
+	}
+
+	/** In the session: a code to the directory's mobile number, to switch the SMS fallback on. */
+	public function DoSmsCodeRequest() : array
+	{
+		$oAccount = $this->getMainAccountFromToken();
+		$sOutcome = $this->issueEmailCode($oAccount->Email(), $this->sessionBinding(), 'enroll', 'sms');
+		$this->Logger()->Write("TFA: SMS code (enroll) {$sOutcome} for {$oAccount->Email()}");
+		return $this->jsonResponse(__FUNCTION__, array('Sent' => 'sent' === $sOutcome, 'Reason' => $sOutcome));
+	}
+
+	/**
+	 * Switches the SMS fallback on: the code just received AND a current
+	 * second factor (Code or Assertion) — always, since it only exists next
+	 * to another one. The number's owner is whoever the directory says: the
+	 * code proves that this number answers, not whose it is.
+	 */
+	public function DoSmsCodeEnable() : array
+	{
+		$oAccount = $this->getMainAccountFromToken();
+		$sBinding = $this->sessionBinding();
+		$sKey = $this->recordKey();
+		$aRecord = $this->loadRecord($oAccount);
+		if (!$aRecord || '' === $sBinding || !empty($aRecord['SmsOn']) || !TwoFactorRecord::hasFactor($aRecord, $sKey)
+			|| '' === $this->smsMasked($oAccount->Email())) {
+			return $this->jsonResponse(__FUNCTION__, false);
+		}
+		if ('ok' !== $this->proveSecondFactor($oAccount)) {
+			return $this->jsonResponse(__FUNCTION__, false);
+		}
+		$mCode = $this->jsonParam('SmsCode', '');
+		$sCode = \is_string($mCode) ? \trim($mCode) : '';
+		$sOutcome = $this->underLock($oAccount, function () use ($oAccount, $sCode, $sBinding, $sKey) {
+			$aRecord = $this->loadRecord($oAccount);
+			if (!$aRecord || !TwoFactorRecord::hasFactor($aRecord, $sKey)) {
+				return 'none';
+			}
+			if (TwoFactorRecord::EMAIL_DIGITS !== \strlen($sCode)) {
+				return 'wrong';
+			}
+			[$sJudged, $aNext] = TwoFactorRecord::check($aRecord, $sCode, $sKey, \time(), fn () => null,
+				array('b' => $sBinding, 'p' => 'enroll', 'c' => 'sms'));
+			if ('ok' !== $sJudged) {
+				$this->saveRecord($oAccount, $aNext);
+				return $sJudged;
+			}
+			$aNext['SmsOn'] = true;
+			return $this->saveRecord($oAccount, $aNext) ? 'ok' : 'busy';
+		}) ?? 'busy';
+		$this->Logger()->Write("TFA: SMS code enrolment {$sOutcome} for {$oAccount->Email()}");
+		return $this->jsonResponse(__FUNCTION__, 'ok' === $sOutcome ? $this->getTwoFactorInfo($oAccount, true) : false);
+	}
+
+	/** Switches it off: a current second factor is required (Code or Assertion). */
+	public function DoSmsCodeDisable() : array
+	{
+		$oAccount = $this->getMainAccountFromToken();
+		$aRecord = $this->loadRecord($oAccount);
+		if (!$aRecord || empty($aRecord['SmsOn']) || 'ok' !== $this->proveSecondFactor($oAccount)) {
+			return $this->jsonResponse(__FUNCTION__, false);
+		}
+		$bDone = $this->underLock($oAccount, function () use ($oAccount) {
+			$aRecord = $this->loadRecord($oAccount);
+			if (!$aRecord) {
+				return false;
+			}
+			unset($aRecord['SmsOn'], $aRecord['SmsCodes']);
+			return $this->saveRecord($oAccount, $aRecord);
+		});
+		$this->Logger()->Write('TFA: SMS code ' . ($bDone ? 'switched off' : 'not switched off') . " for {$oAccount->Email()}");
+		return $this->jsonResponse(__FUNCTION__, $bDone ? $this->getTwoFactorInfo($oAccount, true) : false);
 	}
 
 	/**
@@ -1995,7 +2163,7 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 		return $this->StorageProvider()->Put($oAccount,
 			\RainLoop\Providers\Storage\Enumerations\StorageType::CONFIG,
 			'two_factor',
-			\json_encode($aRecord)
+			\json_encode(TwoFactorRecord::dropSmsAlone($aRecord, $this->recordKey()))
 		);
 	}
 
@@ -2034,7 +2202,8 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 			// 2.34.0: a domain that turned the code by email off refuses
 			// the codes already sent too, not only the next ones.
 			if (null !== $aEmail && !$this->emailCodeDomainAllowed($oAccount->Email())) {
-				$aEmail = null;
+				// 2.35.0: only the email channel is withdrawn; the SMS one has no domain policy.
+				$aEmail = 'email' === ($aEmail['c'] ?? 'email') ? null : array('c' => 'sms') + $aEmail;
 			}
 			[$sOutcome, $aNew] = TwoFactorRecord::check($aRecord, $sCode, $this->recordKey(), \time(),
 				fn (string $sSecret, string $s) => $bTotp ? $oProvider->MatchingSlice($sSecret, $s) : null, $aEmail);
@@ -2139,6 +2308,10 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 			'EmailOffered' => '' !== $this->emailCodeDir() && $this->emailCodeDomainAllowed($oAccount->Email()),
 			'EmailMasked' => '' === ($sRecovery = $this->recoveryAddress($oAccount->Email())) ? '' : static::maskAddress($sRecovery),
 			'EmailOn' => $aRecord ? !empty($aRecord['EmailOn']) : false,
+			// 2.35.0: the SMS fallback. The number only masked, and only here, in the session.
+			'SmsOffered' => '' !== ($sSms = $this->smsMasked($oAccount->Email())),
+			'SmsMasked' => $sSms,
+			'SmsOn' => $aRecord && TwoFactorRecord::smsActive($aRecord, $this->recordKey()),
 			'BackupLeft' => $aRecord ? \count((array) ($aRecord['BackupHashes'] ?? array())) : 0,
 			'WebAuthn' => null !== $aConf,
 			'MaxPasskeys' => $aConf ? $aConf['max'] : 0,

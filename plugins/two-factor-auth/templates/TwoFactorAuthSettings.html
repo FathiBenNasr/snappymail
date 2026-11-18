@@ -140,6 +140,29 @@
 		</div>
 	</div>
 
+	<!-- 2.35.0: a code by SMS, to the number of the directory — a fallback, only next to another second factor. -->
+	<div class="b-settings-two-factor-sms" data-bind="visible: smsOffered">
+		<div class="legend" data-i18n="PLUGIN_2FA/LEGEND_SMS_CODE"></div>
+		<p class="muted width100-on-mobile" style="width: 550px" data-i18n="PLUGIN_2FA/SMS_CODE_DESC"></p>
+		<div>
+			<p><span data-i18n="PLUGIN_2FA/LABEL_SMS_NUMBER"></span> <strong dir="ltr" style="unicode-bidi: plaintext" data-bind="text: smsMasked"></strong></p>
+			<p class="twofactor-sms-on" data-bind="visible: smsOn"><strong data-i18n="PLUGIN_2FA/EMAIL_CODE_ON"></strong>
+				&nbsp; <a class="btn twofactor-sms-off" data-bind="click: smsDisable" data-i18n="PLUGIN_2FA/BUTTON_EMAIL_OFF"></a></p>
+			<p class="muted" data-bind="visible: !smsOn() && !secondFactorOn()" data-i18n="PLUGIN_2FA/SMS_CODE_NEEDS_FACTOR"></p>
+			<div data-bind="visible: !smsOn() && secondFactorOn() && !pending()">
+				<a class="btn twofactor-sms-send" data-bind="click: smsSend, css: {disabled: smsBusy}" data-i18n="PLUGIN_2FA/BUTTON_SMS_SEND"></a>
+				<div data-bind="visible: smsSent">
+					<p class="muted" data-i18n="PLUGIN_2FA/SMS_CODE_SENT"></p>
+					<input type="text" class="uiInput twofactor-sms-code" inputmode="numeric" pattern="[0-9]*" maxlength="8"
+						autocomplete="one-time-code" dir="ltr" style="unicode-bidi: plaintext"
+						data-bind="textInput: smsCode, disable: smsBusy, onEnter: smsEnable">
+					<a class="btn btn-primary twofactor-sms-enable" data-bind="click: smsEnable, css: {disabled: smsBusy}" data-i18n="PLUGIN_2FA/BUTTON_EMAIL_ENABLE"></a>
+				</div>
+			</div>
+			<div class="alert" data-bind="visible: smsError, text: smsError"></div>
+		</div>
+	</div>
+
 	<!-- 2.28.0: security keys and passkeys, a second factor next to the code. -->
 	<div class="b-settings-two-factor-keys" data-bind="visible: webauthn">
 		<div class="legend" data-i18n="PLUGIN_2FA/LEGEND_PASSKEYS"></div>

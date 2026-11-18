@@ -204,3 +204,72 @@ test('2.33.0: before login, nothing is asked of the server', () => {
 	v.emailEnable();
 	assert.strictEqual(appels.length, 0);
 });
+
+/* ---- 2.35.0: the code by SMS, a fallback next to another factor ---- */
+test('2.35.0: the screen reads the masked number and the state from the server', () => {
+	const { v } = vueAvecServeur({ Auth: true });
+	v.applyInfo({ Passkeys: [], On: true, SmsOffered: true, SmsMasked: '+216 •• ••• 945', SmsOn: false });
+	assert.deepStrictEqual([v.smsOffered(), v.smsMasked(), v.smsOn()], [true, '+216 •• ••• 945', false]);
+	v.applyInfo({ Passkeys: [], On: true });
+	assert.deepStrictEqual([v.smsOffered(), v.smsMasked(), v.smsOn()], [false, '', false]);
+});
+
+test('2.35.0: nothing is sent without another second factor (never alone), nor before login', () => {
+	const a = vueAvecServeur({ Auth: true });
+	a.v.applyInfo({ Passkeys: [], On: false, SmsOffered: true, SmsMasked: '+216 •• ••• 945' });
+	a.v.smsSend();
+	a.v.smsCode('12345678');
+	a.v.prove = () => { throw new Error('asked'); };
+	a.v.smsEnable();
+	assert.strictEqual(a.appels.length, 0);
+	const b = vueAvecServeur({ Auth: false });
+	b.v.applyInfo({ Passkeys: [], On: true, SmsOffered: true });
+	b.v.smsSend();
+	b.v.smsCode('12345678');
+	b.v.smsEnable();
+	b.v.smsDisable();
+	assert.strictEqual(b.appels.length, 0);
+});
+
+test('2.35.0: the code is asked for, then typed back with a current factor — always', () => {
+	const { v, appels } = vueAvecServeur({ Auth: true });
+	v.applyInfo({ Passkeys: [], On: true, SmsOffered: true, SmsMasked: '+216 •• ••• 945' });
+	v.smsSend();
+	assert.strictEqual(appels[0].action, 'SmsCodeRequest');
+	appels[0].cb(0, { Result: { Sent: true, Reason: 'sent' } });
+	assert.strictEqual(v.smsSent(), true);
+	const preuves = [];
+	v.prove = action => { preuves.push(1); action('123456', () => {}); };
+	v.smsCode(' 12345678 ');
+	v.smsEnable();
+	assert.strictEqual(preuves.length, 1);
+	assert.strictEqual(appels[1].action, 'SmsCodeEnable');
+	assert.strictEqual(appels[1].prm.SmsCode, '12345678');
+	assert.strictEqual(appels[1].prm.Code, '123456');
+	appels[1].cb(0, { Result: { Passkeys: [], On: true, SmsOffered: true, SmsOn: true } });
+	assert.deepStrictEqual([v.smsOn(), v.smsSent(), v.smsCode()], [true, false, '']);
+});
+
+test('2.35.0: a refused code is said, and the cap too', () => {
+	const { v, appels } = vueAvecServeur({ Auth: true });
+	v.applyInfo({ Passkeys: [], On: true, SmsOffered: true });
+	v.prove = action => action('123456', () => {});
+	v.smsCode('00000000');
+	v.smsEnable();
+	appels[0].cb(0, { Result: false });
+	assert.deepStrictEqual([v.smsOn(), v.smsError()], [false, 'PLUGIN_2FA/ERROR_SMS_CODE_WRONG']);
+	v.smsSend();
+	appels[1].cb(0, { Result: { Sent: false, Reason: 'limit' } });
+	assert.deepStrictEqual([v.smsSent(), v.smsError()], [false, 'PLUGIN_2FA/ERROR_EMAIL_LIMIT']);
+});
+
+test('2.35.0: switching it off asks for a current factor', () => {
+	const { v, appels } = vueAvecServeur({ Auth: true });
+	v.applyInfo({ Passkeys: [], On: true, SmsOffered: true, SmsOn: true });
+	const preuves = [];
+	v.prove = action => { preuves.push(1); action('123456', () => {}); };
+	v.smsDisable();
+	assert.deepStrictEqual([preuves.length, appels[0].action, appels[0].prm.Code], [1, 'SmsCodeDisable', '123456']);
+	appels[0].cb(0, { Result: { Passkeys: [], On: true, SmsOffered: true, SmsOn: false } });
+	assert.strictEqual(v.smsOn(), false);
+});

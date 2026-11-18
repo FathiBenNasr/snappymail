@@ -165,7 +165,7 @@ namespace {
 		array(\strlen($sSecret) >= 16, \str_starts_with($c['QRCode'], 'data:image/svg+xml;base64,'), \count(\explode(' ', $c['BackupCodes']))), array(true, true, 8));
 	$check('the stored record holds neither', \str_contains(\reset($p->oStore->data), $sSecret), false);
 	$aInfo = $p->DoGetTwoFactorInfo()['Result'];
-	$check('the info screen never sees secret, codes or QR', \array_keys($aInfo), array('User', 'IsSet', 'Enable', 'Tested', 'On', 'Enrolled', 'OnlyKey', 'Pending', 'PendingAsk', 'PendingKey', 'PendingEmail', 'EmailOffered', 'EmailMasked', 'EmailOn', 'BackupLeft', 'WebAuthn', 'MaxPasskeys', 'Passkeys'));
+	$check('the info screen never sees secret, codes or QR', \array_keys($aInfo), array('User', 'IsSet', 'Enable', 'Tested', 'On', 'Enrolled', 'OnlyKey', 'Pending', 'PendingAsk', 'PendingKey', 'PendingEmail', 'EmailOffered', 'EmailMasked', 'EmailOn', 'SmsOffered', 'SmsMasked', 'SmsOn', 'BackupLeft', 'WebAuthn', 'MaxPasskeys', 'Passkeys'));
 	$check('… nor anything secret-shaped in its values', \preg_match('/' . \preg_quote($sSecret, '/') . '|BackupHashes|SecretBox/', \json_encode($aInfo)), 0);
 
 	$p->params = array('Enable' => '1');
@@ -1148,6 +1148,198 @@ namespace {
 	\is_dir($oT4->oStore->root) && \exec('rm -rf ' . \escapeshellarg($oT4->oStore->root));
 	foreach (array($em0, $em, $nE, $tE) as $x) { \is_dir($x->oStore->root) && \exec('rm -rf ' . \escapeshellarg($x->oStore->root)); }
 	\exec('rm -rf ' . \escapeshellarg($sDirE));
+
+
+	/* ---- 2.35.0: a code by SMS, as a fallback next to another second factor ---- */
+	$sDirS = \sys_get_temp_dir() . '/tfa-sms-' . \getmypid() . '-' . \bin2hex(\random_bytes(4));
+	\mkdir($sDirS . '/etat', 0700, true);
+	$SM = array('email_code_dir' => $sDirS);
+	$mobile = function (string $sCompte, $mMobile) use ($sDirS) {
+		\file_put_contents($sDirS . '/etat/' . \hash('sha256', $sCompte) . '.json', \json_encode(array('formule' => 'smail', 'mobile' => $mMobile)));
+	};
+	$fileS = function () use ($sDirS) : array {
+		$aX = array();
+		foreach (\glob($sDirS . '/codes/*.json') ?: array() as $fE) { $aX[] = \json_decode((string) \file_get_contents($fE), true); \unlink($fE); }
+		return $aX;
+	};
+	$demandeS = function (P $x, string $sEmail) {
+		$x->fresh(); $x->request(null); $x->params = array('Email' => $sEmail);
+		$fE = \microtime(true);
+		$rE = $x->DoSmsCodeLoginRequest()['Result'];
+		return array($rE, \microtime(true) - $fE >= 1.0);
+	};
+	$MASQUE = array('present' => true, 'masque' => '+216 •• ••• 945');
+
+	$s0 = new P();
+	$check('SMS code: off without a directory — not offered anywhere', array($s0->DoSmsCodeLoginRequest()['Result'], $s0->DoGetTwoFactorInfo()['Result']['SmsOffered']), array(false, false));
+	$aAS = array(); $s0->config = $SM; $s0->FilterAppData(false, $aAS);
+	$check('… on with a directory, for every visitor (nothing about the account)', $aAS['TwoFactorSmsLogin'], true);
+	$aAS = array(); $s0->config = $SM + array('sms_code' => false); $s0->FilterAppData(false, $aAS);
+	$check('… and the switch withdraws it', $aAS['TwoFactorSmsLogin'], false);
+
+	$sm = new P(); $sm->config = $SM; $sm->oAccount = new \RainLoop\Model\MainAccount('sana@smail.tn');
+	$mobile('sana@smail.tn', $MASQUE);
+	$check('an account with no second factor: the settings show the masked number, but nothing can be sent',
+		array($sm->DoGetTwoFactorInfo()['Result']['SmsMasked'], $sm->DoSmsCodeRequest()['Result'], $fileS()), array('+216 •• ••• 945', array('Sent' => false, 'Reason' => 'none'), array()));
+	$sm->params = array('SmsCode' => '12345678');
+	$check('… nor switched on (never alone)', $sm->DoSmsCodeEnable()['Result'], false);
+	$cS = $sm->DoCreateTwoFactorSecret()['Result'];
+	$aBack = \explode(' ', $cS['BackupCodes']);
+	$sm->params = array('Code' => $previous($cS['Secret'])); $sm->DoVerifyTwoFactorCode();
+	$sm->params = array('Enable' => '1'); $sm->DoEnableTwoFactor();
+	$sm->request();
+	$check('a number that is not a masked number is not taken', array_map(function ($m) use ($mobile, $sm) { $mobile('sana@smail.tn', $m); return $sm->DoGetTwoFactorInfo()['Result']['SmsMasked']; },
+		array(array('present' => true, 'masque' => '<script>'), array('present' => false, 'masque' => '+216 •• ••• 945'), array('present' => 'yes', 'masque' => '+216 •• ••• 945'), array('masque' => '+216 •• ••• 945'), '+21612345945', array('present' => true, 'masque' => \str_repeat('9', 40)))),
+		array('', '', '', '', '', ''));
+	$mobile('sana@smail.tn', $MASQUE);
+	[$rS, $bWait] = $demandeS($sm, 'sana@smail.tn');
+	$check('login request for an account that has not switched it on: the usual answer, the usual wait, nothing sent, nothing written',
+		array($rS, $bWait, $fileS(), isset($sm->raw()['SmsCodes']), isset($sm->raw()['SmsSends'])), array(true, true, array(), false, false));
+
+	$sm->request(); $sm->params = array();
+	$check('enrolment: a code is queued for the console, marked sms, never with the number',
+		$sm->DoSmsCodeRequest()['Result'], array('Sent' => true, 'Reason' => 'sent'));
+	$aF = $fileS();
+	$check('… the account, 8 digits, the language, the channel', array(\count($aF), $aF[0]['adresse'], (bool) \preg_match('/^\d{8}$/D', $aF[0]['code']), $aF[0]['langue'], $aF[0]['canal'], \str_contains(\json_encode($aF[0]), '216')),
+		array(1, 'sana@smail.tn', true, 'ar', 'sms', false));
+	$sSms = $aF[0]['code'];
+	$check('… the record keeps only a keyed hash of it', \str_contains(\json_encode($sm->raw()), $sSms), false);
+	$sm->params = array('SmsCode' => $sSms);
+	$check('the right code without a current factor does not switch it on', $sm->DoSmsCodeEnable()['Result'], false);
+	$sm->params = array('SmsCode' => '00000000', 'Code' => $aBack[0]);
+	$check('a wrong code does not either', $sm->DoSmsCodeEnable()['Result'], false);
+	$sm->DoSmsCodeRequest(); $sSms = $fileS()[0]['code'] ?? '';
+	$sm->params = array('SmsCode' => '123456', 'Code' => $aBack[1]);
+	$check('… nor a TOTP-shaped one', $sm->DoSmsCodeEnable()['Result'], false);
+	$sm->binding = 'browser-2'; $sm->params = array('SmsCode' => $sSms, 'Code' => $aBack[2]);
+	$check('… nor the right one from another browser', $sm->DoSmsCodeEnable()['Result'], false);
+	$sm->binding = 'browser-1';
+	// A code sent by email is no SMS code.
+	$secoursS = function (string $sCompte, string $sAdresse) use ($sDirS) {
+		\file_put_contents($sDirS . '/etat/' . \hash('sha256', $sCompte) . '.json', \json_encode(array('formule' => 'smail', 'secours' => array('secours' => $sAdresse, 'verifiee' => true), 'mobile' => array('present' => true, 'masque' => '+216 •• ••• 945'))));
+	};
+	$secoursS('sana@smail.tn', 'sana@gmail.com');
+	$sm->params = array('Purpose' => 'enroll'); $sm->DoEmailCodeRequest(); $sMailCode = $fileS()[0]['code'] ?? '';
+	$sm->params = array('SmsCode' => $sMailCode, 'Code' => $aBack[3]);
+	$check('SMS enrolment: a code sent by email is not an SMS code', $sm->DoSmsCodeEnable()['Result'], false);
+	$mobile('sana@smail.tn', $MASQUE);
+	$sm->params = array('SmsCode' => $sSms, 'Code' => $aBack[7]);
+	$aOn = $sm->DoSmsCodeEnable()['Result'];
+	$check('the right code with a current factor switches it on, no new backup codes', array($aOn['SmsOn'], isset($aOn['BackupCodes']), $aOn['On'], $aOn['Pending']), array(true, false, true, false));
+	$check('… the code is spent', $sm->DoSmsCodeEnable()['Result'], false);
+	$check('… the record holds no number', \str_contains(\json_encode($sm->raw()), '+216') || \str_contains(\json_encode($sm->raw()), 'u2022'), false);
+
+	// At the login screen.
+	[$rS, $bWait] = $demandeS($sm, 'sana');
+	$aF = $fileS();
+	$check('login request: same answer, same wait, one code queued for the account the core resolved, channel sms',
+		array($rS, $bWait, \count($aF), $aF[0]['adresse'] ?? '', $aF[0]['canal'] ?? ''), array(true, true, 1, 'sana@smail.tn', 'sms'));
+	$sLoginS = $aF[0]['code'];
+	$sm->binding = 'browser-9';
+	$check('the code from another browser is refused before the password', $login($sm, array('totp_code' => $sLoginS)), $AUTH);
+	$sm->binding = 'browser-1';
+	$check('a wrong 8-digit code too', $login($sm, array('totp_code' => '00000000')), $AUTH);
+	$check('the right one lets the password through', $login($sm, array('totp_code' => $sLoginS)), 'directory+ok');
+	$check('… once', $login($sm, array('totp_code' => $sLoginS)), $AUTH);
+	$deverrouiller($sm);
+	// Never a way to weaken the second factor.
+	$sm->DoSmsCodeRequest(); $sm->request(); $sm->params = array('Purpose' => 'enroll');
+	$demandeS($sm, 'sana@smail.tn'); $sReau = $fileS()[0]['code'] ?? '';
+	$sm->request(); $sm->params = array('Code' => $sReau);
+	$check('an SMS code proves nothing in the session: it does not switch the SMS factor off', $sm->DoSmsCodeDisable()['Result'], false);
+	$sm->params = array('Code' => $sReau);
+	$check('… nor the email factor', $sm->DoEmailCodeDisable()['Result'], false);
+	$check('… and switching it off without a factor is refused', (function () use ($sm) { $sm->params = array(); return $sm->DoSmsCodeDisable()['Result']; })(), false);
+
+	// The caps, shared with the email request for the address.
+	$deverrouiller($sm);
+	$aRaw = $sm->raw(); $aRaw['SmsSends'] = array(); $sm->setRaw($aRaw); $fileS();
+	for ($i = 0; $i < 4; ++$i) { $demandeS($sm, 'sana@smail.tn'); }
+	$check('per account: 3 SMS in 15 minutes, not 4', \count($fileS()), 3);
+	$check('… and at most 3 live at once', \count($sm->raw()['SmsCodes']), 3);
+	\RainLoop\Actions::$ip = '203.0.113.77';
+	for ($i = 0; $i < 12; ++$i) { $aRaw = $sm->raw(); $aRaw['SmsSends'] = array(); $sm->setRaw($aRaw); $demandeS($sm, 'sana@smail.tn'); }
+	$check('per address: 10 an hour', \count($fileS()), 10);
+	\RainLoop\Actions::$ip = '198.51.100.7';
+	$aRaw = $sm->raw(); $aRaw['SmsSends'] = array(); $sm->setRaw($aRaw);
+
+	// An email code is not an SMS code, nor the reverse.
+	$mobile('sana@smail.tn', array('present' => false));
+	[$rS] = $demandeS($sm, 'sana@smail.tn');
+	$check('the directory has lost the number: nothing is sent', array($rS, $fileS()), array(true, array()));
+	$mobile('sana@smail.tn', $MASQUE);
+
+	// Turning off, with a current factor.
+	$sm->request(); $sm->params = array('Code' => $aBack[4]);
+	$aOffS = $sm->DoSmsCodeDisable()['Result'];
+	$check('switched off with a current factor; the codes are dropped', array($aOffS['SmsOn'], $aOffS['On'], isset($sm->raw()['SmsOn']), isset($sm->raw()['SmsCodes'])), array(false, true, false, false));
+	[$rS] = $demandeS($sm, 'sana@smail.tn');
+	$check('… and the login request sends nothing any more', array($rS, $fileS()), array(true, array()));
+
+	// Never alone: the last other factor goes, the SMS one goes with it.
+	$sm->request(); $sm->params = array('SmsCode' => '', 'Code' => $aBack[5]); $sm->DoSmsCodeRequest(); $sS2 = $fileS()[0]['code'] ?? '';
+	$sm->params = array('SmsCode' => $sS2, 'Code' => $aBack[6]);
+	$check('(switched on again)', $sm->DoSmsCodeEnable()['Result']['SmsOn'] ?? null, true);
+	$aStale = $sm->raw(); $aStale['Enable'] = false; unset($aStale['SecretBox']); $aStale['BackupHashes'] = array();
+	$sm->setRaw($aStale);
+	$check('the authenticator is gone: the SMS factor is gone with it (read)', array($sm->DoGetTwoFactorInfo()['Result']['SmsOn'], $sm->DoGetTwoFactorInfo()['Result']['On']), array(false, false));
+	$aStale = $sm->raw(); $aStale['SmsOn'] = true; $aStale['SmsCodes'] = array(array('h' => TwoFactorRecord::hashCode('sms|11112222', TwoFactorRecord::key(\APP_SALT)), 'b' => TwoFactorRecord::hashCode('browser-1', TwoFactorRecord::key(\APP_SALT)), 'p' => 'login', 'e' => \time() + 500, 'n' => 0));
+	$sm->setRaw($aStale);
+	[$rS] = $demandeS($sm, 'sana@smail.tn');
+	$check('a stale SMS flag with no other factor sends nothing', array($rS, $fileS()), array(true, array()));
+	// Re-adding a factor must not bring the SMS one back.
+	$sm->request(); $sm->params = array(); $cS3 = $sm->DoCreateTwoFactorSecret()['Result'];
+	$sm->params = array('Code' => $previous($cS3['Secret'])); $sm->DoVerifyTwoFactorCode();
+	$sm->params = array('Enable' => '1'); $sm->DoEnableTwoFactor();
+	$check('a factor added later does not revive the SMS one', array(isset($sm->raw()['SmsOn']), $sm->DoGetTwoFactorInfo()['Result']['SmsOn']), array(false, false));
+
+	// The email channel is untouched: no channel mark, and it does not answer for an SMS code.
+	$em2 = new P(); $em2->config = $SM; $em2->oAccount = new \RainLoop\Model\MainAccount('lina@smail.tn');
+	$secoursS('lina@smail.tn', 'lina@gmail.com');
+	$em2->params = array('Purpose' => 'enroll'); $em2->DoEmailCodeRequest(); $aM = $fileS();
+	$check('an email code keeps its format: no channel mark', array(\count($aM), isset($aM[0]['canal'])), array(1, false));
+
+	// Cases found by the mutations: a record with no factor, DoLogin alone, the domain policy, the write path.
+	\RainLoop\Actions::$ip = '203.0.113.200';   // a fresh address: the cap per address is shared
+	$mobile('olfa@smail.tn', $MASQUE);
+	$ol = new P(); $ol->config = $SM; $ol->oAccount = new \RainLoop\Model\MainAccount('olfa@smail.tn');
+	$ol->DoCreateTwoFactorSecret();   // a record with a secret, never tested: no second factor yet
+	$check('a record with a secret not yet tested is no factor: no SMS code for it', array($ol->DoSmsCodeRequest()['Result'], $fileS()), array(array('Sent' => false, 'Reason' => 'none'), array()));
+	$kS = TwoFactorRecord::key(\APP_SALT);
+	$aBr = TwoFactorRecord::blank('olfa@smail.tn'); $aBr['EmailOn'] = true; $aBr['SmsOn'] = true;
+	$aBr['BackupHashes'] = array(TwoFactorRecord::hashCode('111111111', $kS));
+	$ol->setRaw($aBr);
+	$ol->request(); $ol->params = array('Code' => '111111111');
+	$check('the email factor goes (the last other one): the SMS factor is written out with it', array($ol->DoEmailCodeDisable()['Result']['SmsOn'] ?? null, isset($ol->raw()['SmsOn'])), array(false, false));
+	// DoLogin on its own (after the password), with the domain policy on, then off.
+	$dl = new P(); $dl->config = $SM; $dl->oAccount = new \RainLoop\Model\MainAccount('lotfi@smail.tn');
+	$mobile('lotfi@smail.tn', $MASQUE);
+	$cD = $dl->DoCreateTwoFactorSecret()['Result'];
+	$dl->params = array('Code' => $previous($cD['Secret'])); $dl->DoVerifyTwoFactorCode();
+	$dl->params = array('Enable' => '1'); $dl->DoEnableTwoFactor();
+	$dl->DoSmsCodeRequest(); $sEn = $fileS()[0]['code'];
+	$dl->params = array('SmsCode' => $sEn, 'Code' => \explode(' ', $cD['BackupCodes'])[0]);
+	$check('(setup of the DoLogin account: SMS on)', $dl->DoSmsCodeEnable()['Result']['SmsOn'] ?? null, true);
+	$viaLogin = function (P $x, string $sCode) : string {
+		$x->fresh(); $x->request(); $x->params = array('totp_code' => $sCode);
+		try { $x->DoLogin($x->oAccount); return 'ok'; } catch (\RainLoop\Exceptions\ClientException $e) { return 'refused'; }
+	};
+	$demandeS($dl, 'lotfi@smail.tn'); $sL1 = $fileS()[0]['code'] ?? '';
+	$check('after the password (DoLogin alone), the SMS code opens the login', $viaLogin($dl, $sL1), 'ok');
+	$check('… once', $viaLogin($dl, $sL1), 'refused');
+	$deverrouiller($dl);
+	\mkdir($sDirS . '/etat/domaines', 0700, true);
+	\file_put_contents($sDirS . '/etat/domaines/' . \hash('sha256', 'smail.tn') . '.json', \json_encode(array('code_secours' => false)));
+	$aRaw = $dl->raw(); $aRaw['SmsSends'] = array(); $dl->setRaw($aRaw);
+	$demandeS($dl, 'lotfi@smail.tn'); $sL2 = $fileS()[0]['code'] ?? '';
+	$check('the domain turned the email code off: the SMS code still opens the login (DoLogin alone)', $viaLogin($dl, $sL2), 'ok');
+	$demandeS($dl, 'lotfi@smail.tn'); $sL3 = $fileS()[0]['code'] ?? '';
+	$check('… and before the password too', $login($dl, array('totp_code' => $sL3)), 'directory+ok');
+	@\unlink($sDirS . '/etat/domaines/' . \hash('sha256', 'smail.tn') . '.json'); @\rmdir($sDirS . '/etat/domaines');
+	\RainLoop\Actions::$ip = '198.51.100.7';
+	foreach (array($ol, $dl) as $x) { \is_dir($x->oStore->root) && \exec('rm -rf ' . \escapeshellarg($x->oStore->root)); }
+	foreach (array($s0, $sm, $em2) as $x) { \is_dir($x->oStore->root) && \exec('rm -rf ' . \escapeshellarg($x->oStore->root)); }
+	\exec('rm -rf ' . \escapeshellarg($sDirS));
 
 	// The temporary storage of every double.
 	foreach (array($p, $r, $t, $a, $n, $q, $o, $w, $f, $g, $h, $k) as $x) { \is_dir($x->oStore->root) && \exec('rm -rf ' . \escapeshellarg($x->oStore->root)); }

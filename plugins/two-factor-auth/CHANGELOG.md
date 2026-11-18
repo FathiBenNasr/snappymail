@@ -15,6 +15,19 @@ Les versions antérieures à 2.30.0 sont décrites, avec leurs mesures, dans
 
 - Guide relu pour le manuel : la connexion par code reçu par courriel dit à quoi elle sert.
 
+## 2.35.0 — 18 novembre 2026
+
+* **Un code par SMS, en secours seulement.** Quand les autres seconds facteurs ne sont pas possibles, un code de
+  8 chiffres peut être envoyé au mobile de la fiche d'annuaire (jamais saisi dans le webmail). Il ne s'active que si un
+  autre facteur est déjà actif, avec un code reçu par SMS **et** un facteur courant ; il tombe si le dernier autre
+  facteur est retiré. Bouton « Si vos autres moyens ne sont pas disponibles : recevoir un code par SMS » à la
+  connexion, mêmes protections que le code par courriel (réponse identique, mêmes plafonds, code lié au navigateur,
+  usage unique, 10 minutes, essais bornés). Section « Code par SMS (secours) » dans les réglages. Textes en
+  français, anglais et arabe.
+* **Avis croisés** (console) : un code demandé par SMS prévient le titulaire par courriel ; un code demandé par
+  courriel le prévient par SMS. Réglage `signup.avis_croises` de la console.
+* Nouveau réglage `sms_code` (activé par défaut) ; sans `email_code_dir`, rien n'est offert. fastmail inchangé.
+
 ## 2.34.2 — 6 novembre 2026
 
 * **« Mot de passe oublié » passe sous le champ du mot de passe, « Créer un compte » sous le bouton « Se connecter ».**
