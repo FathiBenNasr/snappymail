@@ -166,7 +166,7 @@ namespace {
 		array(\strlen($sSecret) >= 16, \str_starts_with($c['QRCode'], 'data:image/svg+xml;base64,'), \count(\explode(' ', $c['BackupCodes']))), array(true, true, 8));
 	$check('the stored record holds neither', \str_contains(\reset($p->oStore->data), $sSecret), false);
 	$aInfo = $p->DoGetTwoFactorInfo()['Result'];
-	$check('the info screen never sees secret, codes or QR', \array_keys($aInfo), array('User', 'IsSet', 'Enable', 'Tested', 'On', 'Enrolled', 'OnlyKey', 'Pending', 'PendingAsk', 'PendingKey', 'PendingEmail', 'EmailOffered', 'EmailMasked', 'EmailOn', 'SmsOffered', 'SmsMasked', 'SmsOn', 'SmsSuspended', 'BackupLeft', 'WebAuthn', 'MaxPasskeys', 'Passkeys'));
+	$check('the info screen never sees secret, codes or QR', \array_keys($aInfo), array('User', 'IsSet', 'Enable', 'Tested', 'On', 'Enrolled', 'OnlyKey', 'Pending', 'PendingAsk', 'PendingKey', 'PendingEmail', 'EmailOffered', 'EmailMasked', 'EmailOn', 'SmsOffered', 'SmsMasked', 'SmsOn', 'SmsSuspended', 'SmsDomainOff', 'BackupLeft', 'WebAuthn', 'MaxPasskeys', 'Passkeys'));
 	$check('… nor anything secret-shaped in its values', \preg_match('/' . \preg_quote($sSecret, '/') . '|BackupHashes|SecretBox/', \json_encode($aInfo)), 0);
 
 	$p->params = array('Enable' => '1');
@@ -1446,6 +1446,51 @@ namespace {
 	$check('wrong tries from another browser do not burn the owner\'s code', $login($wr, array('totp_code' => $sW3)), 'directory+ok');
 	$check('the way the session was opened is in the log (a session opened by SMS can be told)', \count(\array_filter($wr->log, fn ($l) => \str_contains($l, 'login_factor=sms for wafa@smail.tn'))) >= 2, true);
 
+
+	/* ---- 2.36.0: the organisation turns the code by SMS off (code_sms, same file as code_secours) ---- */
+	$polDom = function (?string $sJson, string $sDom = 'smail.tn') use ($sDirS) {
+		@\mkdir($sDirS . '/etat/domaines', 0700, true);
+		$f = $sDirS . '/etat/domaines/' . \hash('sha256', $sDom) . '.json';
+		null === $sJson ? @\unlink($f) : \file_put_contents($f, $sJson);
+	};
+	[$dm, $aBd] = $mkSms('dora@smail.tn', '203.0.113.71');
+	$dm->params = array(); $dm->request();
+	$check('domain policy: no file — the SMS is offered and on', array($dm->DoGetTwoFactorInfo()['Result']['SmsOffered'], $dm->DoGetTwoFactorInfo()['Result']['SmsOn'], $dm->DoGetTwoFactorInfo()['Result']['SmsDomainOff']), array(true, true, false));
+	$demandeS($dm, 'dora@smail.tn'); $sBefore = $fileS()[0]['code'] ?? '';
+	$polDom('{"domaine":"smail.tn","code_secours":true,"code_sms":false}');
+	$aRawBefore = $dm->raw();
+	$aInf = $dm->DoGetTwoFactorInfo()['Result'];
+	$check('domain off: not offered, no number shown, the settings say why, the existing factor is inactive', array($aInf['SmsOffered'], $aInf['SmsMasked'], $aInf['SmsDomainOff'], $aInf['SmsOn']), array(false, '', true, false));
+	$check('… but it is not deleted: the record keeps it, and does not call it suspended', array(!empty($dm->raw()['SmsOn']), isset($dm->raw()['SmsNum']), isset($dm->raw()['SmsSuspended'])), array(true, true, false));
+	$check('… a code sent before the domain turned it off opens nothing any more', $login($dm, array('totp_code' => $sBefore)), $AUTH);
+	[$rS] = $demandeS($dm, 'dora@smail.tn');
+	$check('… the login request: the same answer, nothing sent, nothing written (no suspension notice either)', array($rS, $fileS(), $dm->raw() == $aRawBefore || !isset($dm->raw()['SmsSuspended'])), array(true, array(), true));
+	$dm->request(); $dm->params = array();
+	$check('… no enrolment code is sent', $dm->DoSmsCodeRequest()['Result'], array('Sent' => false, 'Reason' => 'none'));
+	$dm->params = array('SmsCode' => '12345678', 'Code' => $aBd[2]);
+	$check('… and it cannot be enabled', $dm->DoSmsCodeEnable()['Result'], false);
+	$aAD = array(); $dm->FilterAppData(false, $aAD);
+	$check('… the login screen button is unchanged (it says nothing of any account)', $aAD['TwoFactorSmsLogin'], true);
+	$polDom('{"domaine":"smail.tn","code_secours":false,"code_sms":true}');
+	$check('code_secours off alone leaves the SMS on (two settings, one file)', array($dm->DoGetTwoFactorInfo()['Result']['SmsOn'], $dm->DoGetTwoFactorInfo()['Result']['SmsOffered']), array(true, true));
+	$polDom('{"domaine":"smail.tn","code_secours":false}');
+	$check('a file with no code_sms key (an older console): the SMS is on', $dm->DoGetTwoFactorInfo()['Result']['SmsOn'], true);
+	$polDom('{"domaine":"smail.tn","code_secours":true,"code_sms":"no"}');
+	$check('a code_sms that is not an explicit true: off', $dm->DoGetTwoFactorInfo()['Result']['SmsDomainOff'], true);
+	foreach (array('{not json', '', '"text"') as $sJ) {
+		$polDom($sJ);
+		$check('a policy that cannot be read is off: ' . \json_encode($sJ), array($dm->DoGetTwoFactorInfo()['Result']['SmsOffered'], $dm->DoGetTwoFactorInfo()['Result']['SmsDomainOff']), array(false, true));
+	}
+	$polDom('{"code_sms":false}', 'autre.tn');
+	$polDom(null);
+	$check('another domain\'s policy does not touch this one; no file: on again, the factor comes back as it was', array($dm->DoGetTwoFactorInfo()['Result']['SmsOn'], $dm->DoGetTwoFactorInfo()['Result']['SmsDomainOff']), array(true, false));
+	$demandeS($dm, 'dora@smail.tn'); $sAfter = $fileS()[0]['code'] ?? '';
+	$check('… and its code opens the login again', $login($dm, array('totp_code' => $sAfter)), 'directory+ok');
+	$polDom('{"domaine":"smail.tn","code_secours":true,"code_sms":false}');
+	$demandeS($dm, 'dora@smail.tn');
+	$check('with the domain off, even the DoLogin path refuses a stored code', array($fileS(), $viaLogin($dm, '99998888')), array(array(), 'refused'));
+	$polDom(null); @\rmdir($sDirS . '/etat/domaines');
+	\is_dir($dm->oStore->root) && \exec('rm -rf ' . \escapeshellarg($dm->oStore->root));
 	// The per-address counters are purged.
 	$sDeb = $sDirS . '/codes-debit';
 	\is_dir($sDeb) || \mkdir($sDeb, 0750);

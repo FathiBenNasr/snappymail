@@ -281,3 +281,11 @@ test('2.35.1: a suspended SMS factor (the number changed) is shown as such, and 
 	v.applyInfo({ Passkeys: [], On: true, SmsOffered: true, SmsOn: true, SmsSuspended: false });
 	assert.deepStrictEqual([v.smsOn(), v.smsSuspended()], [true, false]);
 });
+
+test('2.36.0: the organisation turned the code by SMS off — the settings say so, and it clears when it comes back', () => {
+	const { v } = vueAvecServeur({ Auth: true });
+	v.applyInfo({ Passkeys: [], On: true, SmsOffered: false, SmsMasked: '', SmsOn: false, SmsDomainOff: true });
+	assert.deepStrictEqual([v.smsOffered(), v.smsDomainOff(), v.smsOn()], [false, true, false]);
+	v.applyInfo({ Passkeys: [], On: true, SmsOffered: true, SmsOn: true, SmsDomainOff: false });
+	assert.deepStrictEqual([v.smsDomainOff(), v.smsOn()], [false, true]);
+});

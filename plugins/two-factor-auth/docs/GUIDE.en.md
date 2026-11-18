@@ -146,6 +146,8 @@ once, in the browser that asked for it. At most three codes per quarter of an ho
 recovery address if you have one). And every time a code is asked for by email, you are warned by SMS. If it was not
 you, change your password. If the section does not appear, your profile has no mobile.
 
+If your organisation has turned the code by SMS off, the section says so: a code by SMS you had switched on is then suspended (not deleted) and comes back as it was if they turn it on again.
+
 If the mobile number of your profile changes, the code by SMS is **suspended**: a message appears in the section and you
 are warned by email. To switch it on again, send a code to the new number and confirm it. It only counts while another
 way is **really usable** (for example, the code by the recovery address needs a confirmed recovery address).

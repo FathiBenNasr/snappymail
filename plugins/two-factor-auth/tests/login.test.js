@@ -385,3 +385,22 @@ test('2.35.0: sans adresse tapée, aucun SMS n’est demandé ; le bouton du cou
 	assert.strictEqual(c.appels[0].action, 'EmailCodeLoginRequest');
 	assert.strictEqual(c.boutons.sms.disabled, false);
 });
+
+test('2.36.0: les messages de l’écran de connexion (SMS comme courriel) ne disent rien du titulaire, d’un avis, d’un autre canal, ni — pour le courriel — d’un SMS', () => {
+	const avis = /titulaire|holder|صاحب|averti|informé|warned|notified|informed|autre canal|another channel|قناة|يُنبَّه|يُخطَر|avis|notice|alert/i;
+	const sms = /sms|text message|رسائل نصية|رسالة نصية/i;
+	for (const langue of ['fr', 'en', 'ar']) {
+		const ini = fs.readFileSync(path.join(__dirname, '../langs/' + langue + '.ini'), 'utf8');
+		const ligne = cle => ini.split('\n').find(l => l.startsWith(cle + ' ')) || '';
+		for (const cle of ['INFO_SMS_CODE_SENT', 'INFO_EMAIL_CODE_SENT', 'ERROR_SMS_FOR_CODE', 'ERROR_EMAIL_FOR_CODE']) {
+			assert.ok(ligne(cle).length > 20, langue + ' ' + cle + ' présent');
+			assert.ok(!avis.test(ligne(cle)), langue + ' ' + cle + ' : ' + ligne(cle));
+		}
+		// Le message du code par courriel ne parle pas de SMS non plus (ni à l’écran de connexion, ni à l’inscription).
+		for (const cle of ['INFO_EMAIL_CODE_SENT', 'ERROR_EMAIL_FOR_CODE', 'EMAIL_CODE_SENT', 'BUTTON_EMAIL_CODE']) {
+			assert.ok(!sms.test(ligne(cle)), langue + ' ' + cle + ' ne cite pas le SMS : ' + ligne(cle));
+		}
+	}
+	const login = fs.readFileSync(path.join(__dirname, '../js/TwoFactorAuthLogin.js'), 'utf8');
+	assert.ok(!/titulaire|account holder|another channel|autre canal|informed|warned/i.test(login), 'le JS de connexion ne porte pas non plus la phrase');
+});

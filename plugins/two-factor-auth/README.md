@@ -113,7 +113,7 @@ one is on.
 | `webauthn_challenge_ttl` | 300 | seconds (30–3600); each challenge is used once |
 | `webauthn_counter_regression` | refuse | `refuse` or `warn` when a key's signature counter goes back |
 | `email_code_dir` | empty | (2.33.0) the `formules` directory shared with the administration console: it writes `etat/<sha256>.json` (the recovery address and whether it is verified) and mails what the plugin queues in `codes/`. Empty: the code by email is off. (2.34.0) A domain the console listed in `etat/domaines/<sha256(domain)>.json` without `"code_secours": true` refuses it, codes already sent included; no file means on |
-| `sms_code` | on | (2.35.0) the SMS fallback: with `email_code_dir` set, an account that already has another second factor may also receive a code on the mobile number of its directory entry (published masked by the console in `etat/<sha256>.json`, key `mobile`); the console warns the holder by another channel at every request. Off: not offered |
+| `sms_code` | on | (2.35.0) the SMS fallback: with `email_code_dir` set, an account that already has another second factor may also receive a code on the mobile number of its directory entry (published masked by the console in `etat/<sha256>.json`, key `mobile`); the console warns the holder by another channel at every request. Off: not offered | Per domain (2.36.0): the console writes `"code_sms": false` in `etat/domaines/<sha256(domain)>.json` (same file as `code_secours`) to turn it off for an organisation; no file or no key: on; unreadable file: off |
 
 Verified on the server, without any third-party library
 (`providers/webauthn.php`): ES256, RS256 (2048–4096 bits), EdDSA (Ed25519, with

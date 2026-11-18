@@ -156,15 +156,15 @@ check('expired ones are dropped when a new one comes', \count(TwoFactorRecord::a
 /* ---- 2.32.0: codes held until their keeper proves it ---- */
 $aCodesP = TwoFactorRecord::newBackupCodes();
 $aOld = TwoFactorRecord::create('u@x', 'SECRET', array('111111111'), $sKeyR);
-$aKey = array('Id' => 'abc', 'Alg' => -7, 'Key' => 'k', 'SignCount' => 0);
+$aKey = array('Id' => 'kid-nothex', 'Alg' => -7, 'Key' => 'k', 'SignCount' => 0);
 $aP = TwoFactorRecord::startPending(TwoFactorRecord::blank('u@x'), $aCodesP, $aKey, 'browser-1', 1000, $sKeyR);
 check('pending: nothing active, the codes only as hashes, the key sealed',
-	array(TwoFactorRecord::isOn($aP, $sKeyR), \str_contains(\json_encode($aP), $aCodesP[0]), \str_contains(\json_encode($aP), 'abc'), \count($aP['Pending']['h'])), array(false, false, false, 8));
+	array(TwoFactorRecord::isOn($aP, $sKeyR), \str_contains(\json_encode($aP), $aCodesP[0]), \str_contains(\json_encode($aP), 'kid-nothex'), \count($aP['Pending']['h'])), array(false, false, false, 8));
 check('pending: valid for 15 minutes, then not', array(null !== TwoFactorRecord::pending($aP, 1000 + 899), null !== TwoFactorRecord::pending($aP, 1000 + 900)), array(true, false));
 $iAsk = $aP['Pending']['ask'];
 [$sO, $aR] = TwoFactorRecord::confirmPending($aP, $aCodesP[$iAsk], 'browser-1', 1100, $sKeyR);
 check('confirm with the asked code: ok, key and codes in force, pending gone',
-	array($sO, TwoFactorRecord::isOn($aR, $sKeyR), \count($aR['BackupHashes']), isset($aR['Pending']), TwoFactorRecord::passkeys($aR, $sKeyR)[0]['Id']), array('ok', true, 8, false, 'abc'));
+	array($sO, TwoFactorRecord::isOn($aR, $sKeyR), \count($aR['BackupHashes']), isset($aR['Pending']), TwoFactorRecord::passkeys($aR, $sKeyR)[0]['Id']), array('ok', true, 8, false, 'kid-nothex'));
 check('the asked code is not spent', TwoFactorRecord::spendBackupCode($aR, $aCodesP[$iAsk], $sKeyR) !== null, true);
 $sOther = $aCodesP[($iAsk + 1) % 8];
 check('another code of the list: wrong, counted', array(TwoFactorRecord::confirmPending($aP, $sOther, 'browser-1', 1100, $sKeyR)[0], TwoFactorRecord::confirmPending($aP, $sOther, 'browser-1', 1100, $sKeyR)[1]['Pending']['n']), array('wrong', 1));

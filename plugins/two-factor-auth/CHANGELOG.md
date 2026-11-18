@@ -15,6 +15,15 @@ Les versions antérieures à 2.30.0 sont décrites, avec leurs mesures, dans
 
 - Guide relu pour le manuel : la connexion par code reçu par courriel dit à quoi elle sert.
 
+## 2.36.0 — 18 novembre 2026
+
+* **Votre organisation peut désactiver le code par SMS.** Une clé `code_sms` dans le même fichier de domaine que
+  `code_secours` : le SMS n'est ni proposé, ni envoyé, ni accepté, ni activable pour un compte dont le domaine l'a
+  éteint. Un code par SMS déjà activé reste enregistré mais inactif tant que le domaine l'éteint, et les réglages le
+  disent ; il revient tel quel quand le domaine le rallume. Allumé par défaut ; un fichier illisible vaut éteint.
+* **L'écran de connexion ne dit plus que le titulaire est averti** : ce message s'affiche à quiconque demande un code,
+  attaquant compris, et reste identique pour tout compte. La mention demeure dans les réglages et les guides.
+
 ## 2.35.1 — 18 novembre 2026
 
 * **Le code par SMS est lié au numéro enrôlé.** Si le mobile de la fiche change, le facteur SMS est suspendu, un message

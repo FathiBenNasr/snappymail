@@ -11,7 +11,7 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 {
 	const
 		NAME     = 'Two Factor Authentication',
-		VERSION  = '2.35.1',
+		VERSION  = '2.36.0',
 		RELEASE  = '2026-11-06',
 		REQUIRED = '2.36.0',
 		CATEGORY = 'Login',
@@ -1933,6 +1933,28 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 		return $this->smsPublished($sEmail)[0];
 	}
 
+	/**
+	 * Whether the account's domain accepts the code by SMS (2.36.0). On by default; the console turns it off for an
+	 * organisation that does not want a mobile number to stand as a second factor, by writing
+	 * etat/domaines/<sha256(domain)>.json (the SAME file as `code_secours`) with "code_sms": false. No file: on. A
+	 * file that cannot be read, or is not an object: off (a policy that cannot be read is not consent). A readable
+	 * file without the key: on (it only carries the other setting); a key that is not an explicit true: off.
+	 */
+	protected function smsDomainAllowed(string $sEmail) : bool
+	{
+		$sDir = $this->emailCodeDir();
+		$iAt = \strrpos($sEmail, '@');
+		if ('' === $sDir || false === $iAt) {
+			return false;
+		}
+		$sFile = $sDir . '/etat/domaines/' . \hash('sha256', \strtolower(\trim(\substr($sEmail, $iAt + 1)))) . '.json';
+		if (!\file_exists($sFile)) {
+			return true;
+		}
+		$a = \json_decode((string) @\file_get_contents($sFile), true);
+		return \is_array($a) && (!\array_key_exists('code_sms', $a) || true === $a['code_sms']);
+	}
+
 	/** The keyed fingerprint of the whole number, as the console published it ('' when it did not: then no SMS, failing closed). */
 	protected function smsEmp(string $sEmail) : string
 	{
@@ -1943,7 +1965,9 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 	protected function smsPublished(string $sEmail) : array
 	{
 		$sDir = $this->emailCodeDir();
-		if ('' === $sDir || '' === $sEmail || !$this->smsOffered()) {
+		// 2.36.0: a domain that turned the SMS off: not offered, not sent, not judged, not enrollable. An existing
+		// SmsOn stays in the record, inactive (no number is "published" for it), and comes back if the domain does.
+		if ('' === $sDir || '' === $sEmail || !$this->smsOffered() || !$this->smsDomainAllowed($sEmail)) {
 			return array('', '');
 		}
 		$a = \json_decode((string) @\file_get_contents($sDir . '/etat/' . \hash('sha256', \strtolower(\trim($sEmail))) . '.json'), true);
@@ -2451,6 +2475,8 @@ class TwoFactorAuthPlugin extends \RainLoop\Plugins\AbstractPlugin
 				&& TwoFactorRecord::smsBound($aRecord, $this->smsEmp($oAccount->Email())),
 			// 2.35.1: the number of the directory changed since the enrolment: suspended, to enrol again.
 			'SmsSuspended' => $aRecord ? !empty($aRecord['SmsSuspended']) : false,
+			// 2.36.0: the organisation turned the code by SMS off: the settings say so.
+			'SmsDomainOff' => $this->smsOffered() && !$this->smsDomainAllowed($oAccount->Email()),
 			'BackupLeft' => $aRecord ? \count((array) ($aRecord['BackupHashes'] ?? array())) : 0,
 			'WebAuthn' => null !== $aConf,
 			'MaxPasskeys' => $aConf ? $aConf['max'] : 0,

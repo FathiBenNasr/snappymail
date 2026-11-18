@@ -141,10 +141,11 @@
 	</div>
 
 	<!-- 2.35.0: a code by SMS, to the number of the directory — a fallback, only next to another second factor. -->
-	<div class="b-settings-two-factor-sms" data-bind="visible: smsOffered">
+	<div class="b-settings-two-factor-sms" data-bind="visible: smsOffered() || smsDomainOff()">
 		<div class="legend" data-i18n="PLUGIN_2FA/LEGEND_SMS_CODE"></div>
-		<p class="muted width100-on-mobile" style="width: 550px" data-i18n="PLUGIN_2FA/SMS_CODE_DESC"></p>
-		<div>
+		<p class="alert twofactor-sms-domain-off" data-bind="visible: smsDomainOff" data-i18n="PLUGIN_2FA/SMS_CODE_DOMAIN_OFF"></p>
+		<p class="muted width100-on-mobile" style="width: 550px" data-bind="visible: !smsDomainOff()" data-i18n="PLUGIN_2FA/SMS_CODE_DESC"></p>
+		<div data-bind="visible: !smsDomainOff()">
 			<p><span data-i18n="PLUGIN_2FA/LABEL_SMS_NUMBER"></span> <strong dir="ltr" style="unicode-bidi: plaintext" data-bind="text: smsMasked"></strong></p>
 			<p class="twofactor-sms-on" data-bind="visible: smsOn"><strong data-i18n="PLUGIN_2FA/EMAIL_CODE_ON"></strong>
 				&nbsp; <a class="btn twofactor-sms-off" data-bind="click: smsDisable" data-i18n="PLUGIN_2FA/BUTTON_EMAIL_OFF"></a></p>

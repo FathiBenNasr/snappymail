@@ -154,6 +154,8 @@ courriel (sur votre adresse de secours si vous en avez une). Et chaque fois qu'u
 vous en êtes averti par SMS. Si ce n'est pas vous, changez votre mot de passe. Si la section n'apparaît pas, votre
 fiche n'a pas de mobile.
 
+Si votre organisation a désactivé le code par SMS, la section le dit : le code par SMS que vous aviez activé est alors suspendu (pas supprimé) et revient tel quel si elle le rallume.
+
 Si le numéro de mobile de votre fiche change, le code par SMS est **suspendu** : un message s'affiche dans la section
 et vous en êtes averti par courriel. Pour le réactiver, envoyez un code au nouveau numéro et validez-le. Il ne compte
 que si un autre moyen est **réellement utilisable** (par exemple, le code par l'adresse de secours demande une adresse de

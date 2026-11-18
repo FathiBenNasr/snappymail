@@ -126,6 +126,7 @@ class TwoFactorAuthSettings
 		this.smsError = ko.observable('');
 		// 2.35.1: the number of the directory changed since the enrolment: suspended, to enrol again.
 		this.smsSuspended = ko.observable(false);
+		this.smsDomainOff = ko.observable(false);   // 2.36.0: the organisation turned it off
 
 		const fn = iError => iError && this.viewEnable_(false);
 		Object.entries({
@@ -273,6 +274,7 @@ class TwoFactorAuthSettings
 		this.smsMasked(pString(info.SmsMasked));
 		this.smsOn(!!info.SmsOn);
 		this.smsSuspended(!!info.SmsSuspended);
+		this.smsDomainOff(!!info.SmsDomainOff);
 		info.SmsOn && (this.smsSent(false), this.smsCode(''));
 		this.webauthn(!!info.WebAuthn);
 		this.maxPasskeys(info.MaxPasskeys | 0);

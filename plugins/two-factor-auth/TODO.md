@@ -1,6 +1,27 @@
 # two-factor-auth — TODO
 
 
+## 18 novembre 2026 — 2.36.0 : le code par SMS, réglable par domaine
+
+* **Demande du propriétaire** : « la possibilité de réglage de l'OTP par SMS par domaine ». Sur le modèle de `code_secours`
+  (2.34.0) : clé `code_sms` dans le **même** `etat/domaines/<sha256(domaine)>.json`, écrit par la console
+  (`CodeSecoursDomaines::publier`, qui **fusionne** les deux clés sous le verrou d'`EtatFichier` et dit toujours les deux
+  clés, pour qu'un greffon plus ancien ne lise pas l'absence de `code_secours` comme un refus).
+* **Règle** (`smsDomainAllowed`) : pas de fichier = allumé ; fichier illisible ou qui n'est pas un objet = éteint ; clé
+  `code_sms` absente = allumé (le fichier ne porte que l'autre réglage) ; présente et pas `true` = éteint. Pour `code_secours`,
+  la règle de 2.34.0 est inchangée (clé absente = éteint).
+* **Effet** : `smsPublished()` rend ('', '') pour un domaine éteint, donc le SMS n'est ni **proposé** (`SmsOffered` faux),
+  ni **émis** (login et enrôlement : `none`), ni **jugé** (`m` vide : aucun code ne vaut), ni **activable**. Un `SmsOn`
+  existant n'est **pas supprimé** : il est inactif (`SmsOn` faux dans les réglages), n'est pas pris pour une suspension
+  (pas de `SmsSuspended`, pas d'avis), et revient tel quel quand le domaine rallume. Les réglages le disent
+  (`SmsDomainOff`). « Jamais seul » (`otherUsable`) inchangé. Le bouton de l'écran de connexion reste offert à tous
+  (il ne dit rien d'un compte).
+* **Écran de connexion** : la phrase « le titulaire est averti par un autre canal » est retirée de `INFO_SMS_CODE_SENT`
+  (demande du propriétaire) : le message est vu par quiconque demande un code, attaquant compris, et reste identique pour tout
+  compte. Un essai (`login.test.js`) refuse toute mention du titulaire ou d'un avis dans les messages de l'écran de connexion
+  (SMS et courriel) et dans le JS. La mention demeure dans les réglages (`SMS_CODE_DESC`) et les guides.
+* **Essais** : PHP Actions 443, Record 131, WebAuthn 92 ; JS 70 — suites entières vertes. Mutations du réglage de domaine : 7 sur 7 tuées. Le message du code par courriel est tenu de la même façon (aucune mention d'avis, de SMS ni d'autre canal, dans les trois langues et le JS ; essai éprouvé en panne). Un essai du Record qui échouait une fois sur dix (la chaîne `abc` se retrouve dans les empreintes hexadécimales) est rendu déterministe.
+
 ## 18 novembre 2026 — 2.35.1 : les constats de la revue indépendante (`docs/revues/2026-11-18-revue-sms.md`)
 
 Chaque constat a été **vérifié contre le code avant d'être corrigé** ; aucun n'était faux. Un seul est resté en partie hors de portée du greffon (7).
